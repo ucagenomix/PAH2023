@@ -1,0 +1,111 @@
+---
+title: "10x htap for vizgen"
+author: '[Kevin Lebrigand](mailto:lebrigand@ipmc.cnrs.fr) CNRS Senior Scientist - Computational Biology'
+date: 'Compiled: `r format(Sys.Date(), "%B %d, %Y")`'
+output:
+  html_document:
+    df_print: paged
+    toc: yes
+    toc_depth: '3'
+  html_notebook:
+    code_folding: none
+    theme: journal
+    toc: yes
+    toc_depth: 3
+    toc_float: yes
+  pdf_document:
+    toc: yes
+    toc_depth: '3'
+---
+
+<style type="text/css">
+
+body, td {
+   font-size: 15px;
+}
+code.r{
+  font-size: 15px;
+}
+pre {
+  font-size: 15px
+}
+</style>
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  cache = FALSE,
+  cache.lazy = FALSE,
+  tidy = TRUE
+)
+ 
+```
+
+\pagebreak
+# loading / converting
+
+```{r message=FALSE, warning=FALSE, echo=TRUE, eval=T, fig.height=6, fig.width=10}
+
+setwd("/data/10x_data/10x_htap")
+source("/data/10x_data/00.common.import.R")
+
+library(Seurat)
+library(SeuratData)
+library(SeuratDisk)
+
+cols <- readRDS("/data/data_mbouamboua/projects/10x_htap_nucseq/analysis/col.pal.rds")
+htap <- readRDS("/data/data_mbouamboua/projects/10x_htap_nucseq/analysis/htap_v2.rds")
+dim(htap)
+
+htap <- SetIdent(htap,value="celltype")
+htap <- RenameIdents(htap, 'AT2a' = 'AT2', 
+                           'AT2b' = 'AT2', 
+                           'AT1-imm' = 'AT1', 
+                           'AT1-AT2' = 'AT1',
+                           'VSMC' = 'SMC',
+                           'ASMC' = 'SMC',
+                           'DC1' = 'Dendritic',
+                           'Mono' = 'Monocyte',
+                            'T-prolif' = 'CD4',
+                           'Lymph' = 'Lymphatic',
+                           'Peri' = 'Pericyte',
+                           'DC2' = 'Dendritic',
+                           'pDC' = 'Dendritic',
+                           'MacroATP10A' = 'AlvMacro',
+                           'Macro-prolif' = 'AlvMacro',
+                           'MacroCD68' = 'AlvMacro',
+                           'Pre-TB-SC' = 'Secretory',
+                           'TRB-SC' = 'Secretory',
+                           'V-SysEC' = 'VeinEC',
+                           'Inter-Macro' = 'InterMacro',
+                           'V-PulmEC' = 'VeinEC',
+                           'MCC' = 'Multiciliated',
+                           'PNEC' = 'Neuroendocrine'
+                     )
+
+
+df <- as.character(htap@active.ident)
+htap@meta.data$celltype <- df
+
+htap <- SetIdent(htap,value="celltype")
+DimPlot(object = htap, pt.size = 1, label=TRUE)
+
+# ------------------------------------------------------------------------------------------------
+# conversion to h5ad
+DefaultAssay(htap) <- "RNA"
+htap[['integrated']] <- NULL
+htap@assays$RNA@meta.features <- data.frame(rownames(htap))
+slot(object = htap[["RNA"]], name = 'scale.data') <- new(Class = 'matrix')
+htap@meta.data <- htap@meta.data[c("orig.ident","nCount_RNA","nFeature_RNA","percent.mito","seurat_clusters","sample","group","sex","smoker","lineage","compartment","celltype","population")]
+htap <- AddMetaData(htap,htap@reductions$umap@cell.embeddings,col.name=c("UMAP_1","UMAP_2"))
+SaveH5Seurat(htap, filename = "/data/10x_data/10x_htap/htap_230727.h5Seurat", overwrite=TRUE)
+Convert("/data/10x_data/10x_htap/htap_230727.h5Seurat", dest = "h5ad", overwrite=TRUE)
+# ------------------------------------------------------------------------------------------------
+
+
+```
+
+```{r message=FALSE, warning=FALSE, echo=TRUE, eval=T, fig.height=6, fig.width=10}
+
+sessionInfo()
+```
+
