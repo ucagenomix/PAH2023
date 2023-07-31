@@ -1,0 +1,758 @@
+---
+title: "10x PAH NucSeq - Figures"
+author: '[Yvon Mbouamboua](mbouamboua@ipmc.cnrs.fr)'
+output:
+  html_document: default
+  html_notebook: default
+date: 'Compiled: `r Sys.Date()`'
+---
+
+# Setting parameters
+
+```{r setup, include=T, warning=F, message=F}
+
+options(future.globals.maxSize = 80000*1024^2)
+main.dir <- "/data/data_mbouamboua/projects/10x_htap_nucseq/"
+out.dir <- paste0(main.dir, "004_outs/figures/")
+if(!dir.exists(out.dir)){dir.create(file.path(out.dir), recursive = T, showWarnings = F)}
+set.seed(4743)
+
+```
+
+# Require R packages and sources
+
+
+```{r warning=F, message=F}
+
+source("/data/data_mbouamboua/apps/Rpkgs/Rpkgs.R")
+source("/data/data_mbouamboua/tools/utilities.R")
+source("/data/data_mbouamboua/tools/visualization.R")
+source("/data/data_mbouamboua/tools/differential_expression.R")
+#col.pal <- readRDS(paste0(main.dir, "003_data_objects/col.pal.rds"))
+set.seed(4743)
+
+```
+
+
+# Loading and filter data quality for DE analysis
+
+```{r}
+
+htap <- readRDS(paste0(main.dir, "003_data_objects/htap.rds"))
+invisible(gc())
+DefaultAssay(htap) <- "RNA"
+Idents(htap) <- "seurat_clusters"
+# Remove cluster 42 (cancer cells)
+htap <- subset(htap, idents = 42, invert = T)
+# Remove undetected genes
+counts <- GetAssayData(htap, assay = "RNA", slot = "counts")
+counts <- counts[rowSums(counts > 0) > 0, ]
+# Remove undesirable genes
+features.to.exclude <- grep(pattern = "^MT-|^MTRNR|^RP[LS][[:digit:]]|^RP[LP][[:digit:]]|^RPL[[:digit:]]|
+                                 ^RPLP[[:digit:]]|^HB[^(P)]|MALAT1|FTL|FTH1|^RNA18S5|^RNA28S5|XIST|RPS4Y1|AC006157.1|
+                                 ZFY|ZFY-AS1|LINC00278|PCDH11Y|USP9Y|DDX3Y|UTY|TMSB4Y|TTTY14|
+                                 AC010889.1|KDM5D|EIF1AY|RPS4Y2", x = rownames(x = htap@assays$RNA@counts), value = T) 
+counts <- counts[-(which(rownames(counts) %in% features.to.exclude)),]
+htap <- subset(htap, features = rownames(counts))
+# Remove lowly expressed genes
+min.cells = 3
+selected.features <- rownames(htap)[Matrix::rowSums(htap) > min.cells]
+# Filter data
+htap <- subset(htap, features = selected.features)
+htap <- NormalizeData(htap)
+rm(counts, features.to.exclude,selected.features, min.cells)
+dim(htap)
+saveRDS(htap, paste0(main.dir, "003_data_objects/htap.filt.rds"))
+
+```
+
+
+# Cluster correlation
+
+```{r fig.width=10, fig.height=8, warning=F}
+
+#htap[['cell_group']] <- paste0(htap@meta.data$celltype,"_", htap@meta.data[,"group"])
+Idents(htap) <- "celltype"
+mnmat <- c()
+uniq <- unique(htap@active.ident)
+htap@meta.data$cluster <- htap@active.ident
+
+for(i in 1:length(uniq)){
+  mnmat <- cbind(mnmat, apply(as.matrix(htap@assays$integrated@data[, htap@meta.data$cluster==uniq[i]]), 1, mean))
+}
+colnames(mnmat) <- as.vector(unique(htap@active.ident))
+mat = cor(mnmat, method = "pearson")
+
+
+p <- pheatmap(mat = mat, 
+              clustering_method = "complete",
+              cluster_rows=T, 
+              cluster_cols=T, 
+              legend = T,
+              annotation_legend = T,
+              fontsize = 10,
+              name = "Pearson's\ncorrelation",
+              color = colorRampPalette(c("Darkblue", "white","red"))(100)
+              #color = colorRampPalette(brewer.pal(10, "RdBu"))(256)
+              #color = viridis::inferno(256)
+              #color=colorRampPalette(rev(RColorBrewer::brewer.pal(n=10, name="RdBu")))(256)
+)
+
+print(p)
+
+pdf(paste0(out.dir, "heatmap_celltype_correlation.pdf"), width = 10, height = 8, useDingbats = F)
+print(p)
+dev.off()
+
+```
+
+
+
+
+# Define colors
+
+```{r fig.width=10, fig.height=7,message=F, warning=F}
+
+col.pal <- list()
+col.pal$endothelial <- c("aCap"="#00bbf9","gCap"="#0466c8","ArtEC"="#6096ba","V-PulmEC"="#657ed4","V-SysEC"="#abc4ff","Lymph"="#124e78")
+
+col.pal$epithelial <- c("Basal"="#7209b7","PNEC"="#d0d1ff","Pre-TB-SC"="#480ca8","TRB-SC"="#9d4edd","MCC"="#b5179e","AT0"="#e0aaff","AT2a"="#6a4c93","AT2b"="#7678ed","AT1-AT2"="#a5668b","AT1-imm"="#a6808c","AT1"="#4d194d")
+
+col.pal$stromal <- c("AlvFibro"="#d58936","AdvFibro"="#ef6351","MyoFibro"="#69140e","Peri"="#9c6644","VSMC"="#d81159","ASMC"="#fbc3bc")
+
+col.pal$immune <- c("MacroATP10A"="#006466","MacroCD68"="#ffd29d","Macro-prolif"="#60d394","DC1"="#d6ce93","DC2"="#758e4f","Mono"="#b1cc74","Inter-Macro"="#38b000","CD4"="#7c6a0a","CD8"="#bcbd8b","T-prolif"="#80ffdb","NK"="#e8fcc2","Mast"="#4f6d7a","Plasma"="#829399","pDC"="#25ced1","B"="#fffbbd","Megak"="#006400")
+
+col.pal$celltype <- c(col.pal$endothelial, col.pal$stromal, col.pal$epithelial, col.pal$immune)
+
+col.pal$population <- c("Endothelial"="#0077b6","Epithelial"="#5e548e","Immune"="#606c38", "Stroma"="#bb3e03")
+
+col.pal$group <- c("CTRL"="#006E82","PAH"="#AA0A3C")
+
+col.pal$sample <- c("PAH.D510"="#6E1631", "PAH.D511"="#8E1C3E", "PAH.D512"="#BD345E", "PAH.D513"="#DB5D6C", "PAH.D514"="#E27D89", "PAH.D532"="#E99EA7", "PAH.D533"="#F0BEC4", "CTRL.D505"="#B6D5D9", "CTRL.D506"="#92C1C6", "CTRL.D507"="#6DACB3", "CTRL.D508"="#4998A1", "CTRL.D509"="#297B71","CTRL.D530"="#1B6B61", "CTRL.D531"="#145049")
+
+Epithelial <- c("Basal","PNEC","Pre-TB-SC","TRB-SC","MCC","AT0","AT2b","AT2a","AT1-AT2","AT1-imm","AT1")
+Endothelial <- c("aCap","gCap","ArtEC","V-PulmEC","V-SysEC","Lymph")
+Stromal <- c("AlvFibro","AdvFibro","MyoFibro","Peri","VSMC","ASMC")
+Immune <- c("Macro-prolif", "MacroATP10A","MacroCD68","Inter-Macro","Mono","Mast", "DC1", "DC2", "pDC", "Plasma" , "B", "NK", "CD4","CD8", "T-prolif","Megak")
+
+htap@meta.data$celltype_order <- factor(htap@meta.data$celltype, levels = c(Endothelial,Stromal,Epithelial,Immune))
+
+
+```
+
+# UMAP
+
+```{r fig.width=14, fig.height=12,message=F, warning=F}
+
+Dim_Plot(obj = htap,  group.by = "celltype_order", colors.use = col.pal$celltype,
+         pt.size = 0.01, figure.plot = T,  legend = T,theme.bw = F, label.show = T, key.size = 6, base.size = 16, label.size = 6)
+
+ggsave(paste0(out.dir, "umap_celltype_legend.pdf"),  width = 14, height = 12,  dpi = 320)
+
+```
+
+```{r fig.width=12, fig.height=12,message=F, warning=F}
+
+Dim_Plot(obj = htap,  group.by = "celltype_order", cell.name = "full_name_order", colors.use = col.pal$celltype,
+         pt.size = 0.01, figure.plot = T,  legend = F,theme.bw = F, label.show = T, key.size = 6, base.size = 16, label.size = 6) 
+
+ggsave(paste0(out.dir, "umap_celltype_nolegend.pdf"), useDingbats = F, width = 12, height = 12,  dpi = 320)
+
+```
+
+
+
+```{r fig.width=10, fig.height=3}
+Plot_Stats(sobj = htap, plot.type = "prop_fill", group.by = "celltype_order",ident = "group",
+          tilt.text = F, text.size = 6,pal.setup = col.pal$group) +
+  xlab(" ") + theme_classic() + #coord_flip() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5,hjust = 1, colour = "black", size = 12),
+        axis.text.y = element_text(colour = "black", size = 12),
+        axis.title.y = element_text(size = 12),
+        axis.title = element_text(size = 12),
+        legend.position = "none",
+        legend.box.margin = margin(0,0,0,-10),
+        legend.key.height = unit(0.2, 'cm'),
+        legend.key.width = unit(0.2, 'cm')) +
+  ylab("Cell type prop.")
+      #scale_x_discrete(limits=rev)
+
+ggsave(paste0(out.dir, "celltype_prop_1.pdf"), useDingbats = F, width = 10, height = 3,  dpi = 320)
+```
+
+
+```{r fig.width=10, fig.height=2}
+
+Plot_Stats(sobj = htap, plot.type = "prop_fill", group.by = "celltype_order",ident = "sample",
+          tilt.text = F, text.size = 6,pal.setup = col.pal$sample) +
+  xlab(" ") + theme_classic() + #coord_flip() +
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.text.y = element_text(colour = "black", size = 12),
+        axis.title.y = element_text(size = 12),
+        axis.title = element_text(size = 12),
+        legend.position = "none",
+        legend.box.margin = margin(0,0,0,-10),
+        legend.key.height = unit(0.2, 'cm'),
+        legend.key.width = unit(0.2, 'cm')) +
+  ylab("Cell type prop.")
+      #scale_x_discrete(limits=rev)
+
+ggsave(paste0(out.dir, "celltype_prop_sample.pdf"), useDingbats = F, width = 10, height = 2,  dpi = 320)
+
+
+
+```
+
+```{r fig.width=2, fig.height=12}
+
+Idents(htap) <- "celltype_order"
+freq_table <- prop.table(x = t(table(htap@active.ident, htap@meta.data[, "group"])), margin = 2)*100
+formattable(freq_table)
+freq_table <- melt(freq_table)
+
+ggplot(freq_table, aes(fill=Var1, y=value, x=Var2)) + 
+  geom_bar(position="stack", stat="identity", colour = "black") + 
+  theme_void() +
+  labs(x="", y="Cell type prop.", fill = "sample") +
+  theme(#axis.text.x = element_text(angle = 0, vjust = 1, hjust=0.5, colour = "black"), 
+        axis.text.x = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks = element_blank(),
+        legend.position = "none",
+        legend.key.size = unit(0.3, "cm")) + 
+  geom_text(aes(label = round(value, digits = 1)), size = 3, colour = "white",
+            position = position_stack(vjust = 0.5)) + coord_flip() +
+     scale_fill_manual(name = ' ', values =  col.pal$group) +
+   scale_x_discrete(limits=rev)
+
+ggsave(paste0(out.dir, "celltype_prop_v3.pdf"), useDingbats = F, width = 2, height = 12,  dpi = 320)
+
+```
+
+
+```{r fig.width=12, fig.height=2}
+
+Idents(htap) <- "celltype_order"
+freq_table <- prop.table(x = t(table(htap@active.ident, htap@meta.data[, "group"])), margin = 2)*100
+formattable(freq_table)
+freq_table <- melt(freq_table)
+
+ggplot(freq_table, aes(fill=Var1, y=value, x=Var2)) + 
+  geom_bar(position="stack", stat="identity") + 
+  #theme_void() +
+  labs(x="", y="Cell type prop.", fill = "group") +
+  theme(#axis.text.x = element_text(angle = 0, vjust = 1, hjust=0.5, colour = "black"), 
+        axis.text.x = element_blank(),
+        axis.text.y = element_text(colour = "black"),
+        #axis.text.y = element_blank(),
+        axis.ticks.x = element_blank(),
+        legend.position = "none",
+        legend.key.size = unit(0.3, "cm")) + 
+  geom_text(aes(label = round(value, digits = 1)), size = 3, colour = "white",
+            position = position_stack(vjust = 0.5)) + #coord_flip() +
+     scale_fill_manual(name = ' ', values =  col.pal$group) +
+   scale_x_discrete(limits=rev) 
+
+ggsave(paste0(out.dir, "celltype_prop_v4.pdf"), useDingbats = F, width = 12, height = 2,  dpi = 320)
+
+```
+
+
+# Summary DE pseudobulk
+
+```{r fig.width=6, fig.height=3}
+
+PB <- readRDS(paste0(main.dir, "004_outs/006_DE_pseudobulk/DE_pseudobulk_PAH_vs_CTRL.rds"))
+DE <- PB$DE
+#PB_sig_DE <- readxl::read_excel(paste0(main.dir, "004_outs/006_DE_pseudobulk/PB_sig_DE.xlsx"))
+DE <- subset(DE, p_val_adj <= 0.05)
+DE$threshold = as.factor(ifelse(DE$p_val_adj < 0.05 & DE$avg_logFC < 0, 'log2[PAH/CTRL]<0',
+                                        ifelse(DE$p_val_adj < 0.05 & DE$avg_logFC > 0, 'log2[PAH/CTRL]>0','log2[PAH/CTRL]<0')))
+
+data <- dplyr::group_by(DE, cell_type, threshold) %>% summarise(count = n())
+
+data <- data %>% 
+  dplyr::group_by(cell_type, threshold) %>% 
+  dplyr::mutate(expr = ifelse(threshold == "log2[PAH/CTRL]<0", -count, count))
+  
+ #sorted_ids <- data$cell_type[order(data$expr)]
+
+data$cell_type <- factor(data$cell_type, levels = c(Endothelial,Stromal,Epithelial,Immune))
+
+ggplot(data, aes(x = cell_type, y = expr, fill = threshold)) + 
+  geom_bar(stat = "identity") +
+  labs(x = "", y = "Expressed genes") +
+  theme_classic() +
+  #theme_bw() +
+  theme(axis.text = element_text(colour = "black"),
+        axis.title = element_text(colour = "black", size = 10),
+        axis.text.x =element_text(angle = 90, hjust = 1, vjust = 0.5),
+        legend.position = c(0.9, 0.8),
+        legend.text = element_text(size = 8),
+        legend.key.height = unit(0.3, 'cm'),
+        legend.key.width = unit(0.3, 'cm')) +
+  scale_fill_manual(name = ' ', values =  c("#AA0A3C","#006E82"), breaks = c('log2[PAH/CTRL]>0','log2[PAH/CTRL]<0')) #+ coord_flip()
+
+ggsave(paste0(out.dir, "summary_DE_pseudobulk.pdf"), width = 6, height = 3, dpi = 50)
+
+  
+```
+
+
+
+# Scatterplot
+
+
+```{r fig.width=14, fig.height=10}
+
+
+Scater_Plot = function(DE = DE, pos_avg_logFC = 0.5, neg_avg_logFC = -0.5, 
+                       select_labels = NULL,  n_label = 10,  cols = cols, cell_order = NULL, label_size = 3){ 
+  
+  res <- group_by(DE, cell_type)
+  res <- mutate(DE, sig = ifelse(p_val_adj < 0.05 & avg_logFC > pos_avg_logFC | p_val_adj < 0.05 & avg_logFC < neg_avg_logFC , "Sig", "NS"))
+  
+  res <- full_join(res, cols, by = "cell_type")
+  
+  res <- mutate(res, col_use = ifelse(sig== "Sig", color, "dark gray"))
+  res <- mutate(res, updown = ifelse(p_val_adj < 0.05 & avg_logFC > pos_avg_logFC, "Up", 
+                                     ifelse(p_val_adj < 0.05 & avg_logFC < neg_avg_logFC, "Down", "NS")))
+  
+  write.table(res, paste("res.tsv", sep = "/"), sep = "\t", quote = F, row.names = F)
+  
+  de_res_table <- table(res$updown, res$cell_type)
+  de_res_table <- as.data.frame.matrix(de_res_table)
+  
+  #add color for sig points
+  col_for_plot <- as.character(res$col_use)
+  table(col_for_plot)
+  res <- mutate(res, alp_for_plot = ifelse(updown == "NS", pos_avg_logFC, 1))
+  alp_for_plot <- res$alp_for_plot
+  
+  res$cell_type <- factor(res$cell_type, levels = cell_order)
+  res <- group_by(res, cell_type) 
+  
+  #get top and bottom 5 DE genes for each type
+  
+  if(!is.null(select_labels)){
+    sigs <- dplyr::filter(res, sig == "Sig")
+    sigs <- subset(sigs, gene %in% select_labels)
+    top <- sigs %>% group_by(cell_type) %>% slice_max(order_by = avg_logFC, n = n_label)
+    bot <- sigs %>% group_by(cell_type) %>% slice_min(order_by = avg_logFC, n = n_label)
+    to.plot <- dplyr::full_join(top, bot)
+  }else{
+    sigs <- dplyr::filter(res, sig == "Sig")
+    top <- sigs %>% group_by(cell_type) %>% slice_max(order_by = avg_logFC, n = n_label)
+    bot <- sigs %>% group_by(cell_type) %>% slice_min(order_by = avg_logFC, n = n_label)
+    to.plot <- dplyr::full_join(top, bot)
+  }
+  
+  
+  res_sig <- dplyr::filter(res, updown != "NS")
+  res_not <- dplyr::filter(res, updown == "NS")
+  col_for_plot <- res_sig$color
+  
+  plot <- ggplot(res, aes( x = cell_type, y = avg_logFC,)) +
+    theme_classic() +
+    geom_jitter_rast(data=res_not,color="dark grey", width = 0.2, height = 0.0, 
+                     alpha = .25, shape = 1, raster.dpi = 300) +
+    geom_jitter_rast(data=res_sig,color=col_for_plot,  width = 0.2, height = 0.0, 
+                     alpha = 1, shape = 1,  raster.dpi = 300) + 
+    theme(axis.text = element_text(size = 10, colour = "black"),
+          axis.text.x = element_text(angle = 45,vjust = 1, hjust=1),
+          axis.title.x = element_blank(), 
+          legend.position = "none", 
+          axis.line = element_line(colour = "black"), 
+          panel.border = element_blank()) + 
+    theme(panel.grid.major = element_blank(), 
+          panel.grid.minor = element_blank())+ 
+    labs(y = "Average logFC") +
+    geom_text_repel(data = to.plot, label = to.plot$gene, fontface = "italic",  size = label_size) 
+  
+  return(plot)
+  
+}
+
+# Order cells
+cell_order <- c(Endothelial,Stromal,Epithelial,Immune)
+cols <- data.frame(col.pal$celltype)
+cols$cell_type <-  rownames(cols)
+names(cols) <- c("color", "cell_type")
+rownames(cols) <- c()
+
+PB <- readRDS(paste0(main.dir, "004_outs/006_DE_pseudobulk/DE_pseudobulk_PAH_vs_CTRL.rds"))
+DE <- PB$DE
+PB_sig_DE <- readxl::read_excel(paste0(main.dir, "004_outs/006_DE_pseudobulk/PB_sig_DE.xlsx"))
+
+p <- Scater_Plot(DE = DE, n_label = 3, cols = cols, pos_avg_logFC = 0.5, neg_avg_logFC = 0.5, 
+            select_labels = PB_sig_DE$Symbol, cell_order = cell_order, label_size = 3)
+print(p)
+
+ggsave(plot = p, filename = paste0(out.dir, "scaterplot_DE_pseudobulk.pdf"), width = 12, height = 7, dpi = 320)
+
+
+
+```
+
+
+
+
+```{r fig.width=6, fig.height=10}
+
+
+Scater_Plot = function(DE = DE, pos_avg_logFC = 0.5, neg_avg_logFC = -0.5, 
+                       select_labels = NULL,  n_label = 10,  cols = cols, cell_order = NULL, label_size = 3){ 
+  
+  res <- group_by(DE, cell_type)
+  res <- mutate(DE, sig = ifelse(p_val_adj < 0.05 & avg_logFC > pos_avg_logFC | p_val_adj < 0.05 & avg_logFC < neg_avg_logFC , "Sig", "NS"))
+  
+  res <- full_join(res, cols, by = "cell_type")
+  
+  res <- mutate(res, col_use = ifelse(sig== "Sig", color, "dark gray"))
+  res <- mutate(res, updown = ifelse(p_val_adj < 0.05 & avg_logFC > pos_avg_logFC, "Up", 
+                                     ifelse(p_val_adj < 0.05 & avg_logFC < neg_avg_logFC, "Down", "NS")))
+  
+  write.table(res, paste("res.tsv", sep = "/"), sep = "\t", quote = F, row.names = F)
+  
+  de_res_table <- table(res$updown, res$cell_type)
+  de_res_table <- as.data.frame.matrix(de_res_table)
+  
+  #add color for sig points
+  col_for_plot <- as.character(res$col_use)
+  table(col_for_plot)
+  res <- mutate(res, alp_for_plot = ifelse(updown == "NS", pos_avg_logFC, 1))
+  alp_for_plot <- res$alp_for_plot
+  
+  res$cell_type <- factor(res$cell_type, levels = cell_order)
+  res <- group_by(res, cell_type) 
+  
+  #get top and bottom 5 DE genes for each type
+  
+  if(!is.null(select_labels)){
+    sigs <- dplyr::filter(res, sig == "Sig")
+    sigs <- subset(sigs, gene %in% select_labels)
+    top <- sigs %>% group_by(cell_type) %>% slice_max(order_by = avg_logFC, n = n_label)
+    bot <- sigs %>% group_by(cell_type) %>% slice_min(order_by = avg_logFC, n = n_label)
+    to.plot <- dplyr::full_join(top, bot)
+  }else{
+    sigs <- dplyr::filter(res, sig == "Sig")
+    top <- sigs %>% group_by(cell_type) %>% slice_max(order_by = avg_logFC, n = n_label)
+    bot <- sigs %>% group_by(cell_type) %>% slice_min(order_by = avg_logFC, n = n_label)
+    to.plot <- dplyr::full_join(top, bot)
+  }
+  
+  
+  res_sig <- dplyr::filter(res, updown != "NS")
+  res_not <- dplyr::filter(res, updown == "NS")
+  col_for_plot <- res_sig$color
+  
+  plot <- ggplot(res, aes( x = cell_type, y = avg_logFC,)) +
+    theme_classic() +
+    geom_jitter_rast(data=res_not,color="dark grey", width = 0.2, height = 0.0, 
+                     alpha = .25, shape = 1, raster.dpi = 300) +
+    geom_jitter_rast(data=res_sig,color=col_for_plot,  width = 0.2, height = 0.0, 
+                     alpha = 1, shape = 1,  raster.dpi = 300) + 
+    theme(axis.text = element_text(size = 10, colour = "black"),
+          axis.text.x = element_text(angle = 0,vjust = 1, hjust=0.5),
+          #axis.title.x = element_blank(), 
+          legend.position = "none", 
+          axis.line = element_line(colour = "black"), 
+          panel.border = element_blank()) + 
+    theme(panel.grid.major = element_blank(), 
+          panel.grid.minor = element_blank())+ 
+    labs(x = "", y = "Average log2[PAH/CTRL]") +
+    scale_x_discrete(limits=rev) +
+    geom_text_repel(data = to.plot, label = to.plot$gene, fontface = "italic",  size = label_size) 
+  
+  return(plot)
+  
+}
+
+Scater_Plot(DE = DE, n_label = 3, cols = cols, pos_avg_logFC = 0.5, neg_avg_logFC = 0.5, 
+            select_labels = PB_sig_DE$Symbol, cell_order = cell_order, label_size = 3) + coord_flip()
+
+ggsave(filename = paste0(out.dir, "scaterplot_DE_pseudobulk_v2.pdf"), width = 6, height = 10, dpi = 320)
+
+```
+
+
+## aCap
+
+```{r fig.width=4, fig.height=3.5}
+
+PB <- readRDS(paste0(main.dir, "004_outs/006_DE_pseudobulk/DE_pseudobulk_PAH_vs_CTRL.rds"))
+PB_sig_DE <- readxl::read_excel(paste0(main.dir, "004_outs/006_DE_pseudobulk/PB_sig_DE.xlsx"))
+
+matrices <- DE_pseudobulk$matrices
+DE_sig <- DE_pseudobulk$DE_sig
+DE_sig <- subset(DE_sig, gene %in% PB_sig_DE$Symbol)
+
+norm_counts <- log(edgeR::cpm(matrices[["aCap"]])+1,2)
+meta <- as.data.frame(str_split_fixed(colnames(norm_counts), ":", 2))
+rownames(meta) <- colnames(norm_counts)
+colnames(meta) <- c("Samples","Groups")
+celltype <- factor(gsub("_", " ", cell_type))
+DE_sub <- DE_sig[DE_sig$cell_type == "aCap",]
+sig_genes <- dplyr::filter(DE_sub, p_val_adj <= 0.05) %>% 
+  dplyr::group_by(cell_type) %>% 
+  dplyr::top_n(n = 100, wt = avg_logFC) %>% 
+  dplyr::pull(gene) 
+
+mat <- norm_counts[unique(sig_genes),]
+mat <- mat[!rowSums(!is.finite(mat)),]
+mat[!is.finite(mat)] <- 0
+
+ann_cols = list(Samples = col.pal$sample, Groups = col.pal$group)
+
+p <- pheatmap::pheatmap(mat = mat, 
+                  annotation_col = meta,
+                  annotation_colors = ann_cols,
+                  clustering_method = "complete",
+                  treeheight_row = 0,
+                  #treeheight_col = 0,
+                  cluster_row = T,
+                  cluster_col = F,
+                  show_rownames = T,
+                  show_colnames = F, 
+                  scale = 'row',
+                  legend = T,
+                  annotation_legend = F,
+                  fontsize = 12,
+                  border_color = NA,
+                  fontsize_col = 10,
+                  main = paste("aCap"),
+                  name = "Scaled exp.",
+                  color = colorRampPalette(c("Darkblue", "white","red"))(100)
+    )
+
+
+
+save_pheatmap_pdf <- function(x, filename, width=7, height=7, useDingbats = FALSE) {
+   stopifnot(!missing(x))
+   stopifnot(!missing(filename))
+   pdf(filename, width=width, height=height,useDingbats = useDingbats)
+   #grid::grid.newpage()
+   grid::grid.draw(x$gtable)
+   #print(x)
+   dev.off()
+}
+
+save_pheatmap_pdf(x = p, filename = paste0(out.dir, "PB/aCap.pdf"), width = 4, height = 3.5)
+
+```
+
+## gCap
+
+```{r fig.width=4, fig.height=10}
+
+PB <- readRDS(paste0(main.dir, "004_outs/006_DE_pseudobulk/DE_pseudobulk_PAH_vs_CTRL.rds"))
+PB_sig_DE <- readxl::read_excel(paste0(main.dir, "004_outs/006_DE_pseudobulk/PB_sig_DE.xlsx"))
+
+matrices <- DE_pseudobulk$matrices
+DE_sig <- DE_pseudobulk$DE_sig
+DE_sig <- subset(DE_sig, gene %in% PB_sig_DE$Symbol)
+
+norm_counts <- log(edgeR::cpm(matrices[["gCap"]])+1,2)
+meta <- as.data.frame(str_split_fixed(colnames(norm_counts), ":", 2))
+rownames(meta) <- colnames(norm_counts)
+colnames(meta) <- c("Samples","Groups")
+celltype <- factor(gsub("_", " ", cell_type))
+DE_sub <- DE_sig[DE_sig$cell_type == "gCap",]
+sig_genes <- dplyr::filter(DE_sub, p_val_adj <= 0.05) %>% 
+  dplyr::group_by(cell_type) %>% 
+  dplyr::top_n(n = 100, wt = avg_logFC) %>% 
+  dplyr::pull(gene) 
+
+mat <- norm_counts[unique(sig_genes),]
+mat <- mat[!rowSums(!is.finite(mat)),]
+mat[!is.finite(mat)] <- 0
+
+ann_cols = list(Samples = col.pal$sample, Groups = col.pal$group)
+
+p <- pheatmap::pheatmap(mat = mat, 
+                  annotation_col = meta,
+                  annotation_colors = ann_cols,
+                  clustering_method = "complete",
+                  treeheight_row = 0,
+                  #treeheight_col = 0,
+                  cluster_row = T,
+                  cluster_col = F,
+                  show_rownames = T,
+                  show_colnames = F, 
+                  scale = 'row',
+                  legend = T,
+                  annotation_legend = F,
+                  fontsize = 12,
+                  border_color = NA,
+                  fontsize_col = 10,
+                  main = paste("gCap"),
+                  name = "logCPM",
+                  color = colorRampPalette(c("Darkblue", "white","red"))(100)
+    )
+
+
+
+save_pheatmap_pdf <- function(x, filename, width=7, height=7, useDingbats = FALSE) {
+   stopifnot(!missing(x))
+   stopifnot(!missing(filename))
+   pdf(filename, width=width, height=height,useDingbats = useDingbats)
+   #grid::grid.newpage()
+   grid::grid.draw(x$gtable)
+   #print(x)
+   dev.off()
+}
+
+save_pheatmap_pdf(x = p, filename = paste0(out.dir, "PB/heatmap_PB_gCap.pdf"), width = 4, height = 10)
+
+
+```
+
+
+## ArtEC
+
+```{r fig.width=4, fig.height=4}
+
+PB <- readRDS(paste0(main.dir, "004_outs/006_DE_pseudobulk/DE_pseudobulk_PAH_vs_CTRL.rds"))
+PB_sig_DE <- readxl::read_excel(paste0(main.dir, "004_outs/006_DE_pseudobulk/PB_sig_DE.xlsx"))
+
+matrices <- DE_pseudobulk$matrices
+DE_sig <- DE_pseudobulk$DE_sig
+DE_sig <- subset(DE_sig, gene %in% PB_sig_DE$Symbol)
+unique(DE_sig$cell_type)
+norm_counts <- log(edgeR::cpm(matrices[["ArtEC"]])+1,2)
+meta <- as.data.frame(str_split_fixed(colnames(norm_counts), ":", 2))
+rownames(meta) <- colnames(norm_counts)
+colnames(meta) <- c("Samples","Groups")
+celltype <- factor(gsub("_", " ", cell_type))
+DE_sub <- DE_sig[DE_sig$cell_type == "ArtEC",]
+sig_genes <- dplyr::filter(DE_sub, p_val_adj <= 0.05) %>% 
+  dplyr::group_by(cell_type) %>% 
+  dplyr::top_n(n = 100, wt = avg_logFC) %>% 
+  dplyr::pull(gene) 
+
+mat <- norm_counts[unique(sig_genes),]
+mat <- mat[!rowSums(!is.finite(mat)),]
+mat[!is.finite(mat)] <- 0
+
+ann_cols = list(Samples = col.pal$sample, Groups = col.pal$group)
+
+p <- pheatmap::pheatmap(mat = mat, 
+                  annotation_col = meta,
+                  annotation_colors = ann_cols,
+                  clustering_method = "complete",
+                  treeheight_row = 0,
+                  #treeheight_col = 0,
+                  cluster_row = T,
+                  cluster_col = F,
+                  show_rownames = T,
+                  show_colnames = F, 
+                  scale = 'row',
+                  legend = T,
+                  annotation_legend = F,
+                  fontsize = 12,
+                  border_color = NA,
+                  fontsize_col = 10,
+                  main = paste("ArtEC"),
+                  name = "Scaled exp.",
+                  color = colorRampPalette(c("Darkblue", "white","red"))(100)
+    )
+
+
+save_pheatmap_pdf(x = p, filename = paste0(out.dir, "PB/ArtEC.pdf"), width = 4, height = 4)
+
+
+```
+
+
+
+## ArtEC
+
+```{r fig.width=4, fig.height=9}
+
+PB <- readRDS(paste0(main.dir, "004_outs/006_DE_pseudobulk/DE_pseudobulk_PAH_vs_CTRL.rds"))
+PB_sig_DE <- readxl::read_excel(paste0(main.dir, "004_outs/006_DE_pseudobulk/PB_sig_DE.xlsx"))
+
+matrices <- DE_pseudobulk$matrices
+DE_sig <- DE_pseudobulk$DE_sig
+DE_sig <- subset(DE_sig, gene %in% PB_sig_DE$Symbol)
+unique(DE_sig$cell_type)
+norm_counts <- log(edgeR::cpm(matrices[["MacroCD68"]])+1,2)
+meta <- as.data.frame(str_split_fixed(colnames(norm_counts), ":", 2))
+rownames(meta) <- colnames(norm_counts)
+colnames(meta) <- c("Samples","Groups")
+celltype <- factor(gsub("_", " ", cell_type))
+DE_sub <- DE_sig[DE_sig$cell_type == "MacroCD68",]
+sig_genes <- dplyr::filter(DE_sub, p_val_adj <= 0.05) %>% 
+  dplyr::group_by(cell_type) %>% 
+  dplyr::top_n(n = 100, wt = avg_logFC) %>% 
+  dplyr::pull(gene) 
+
+mat <- norm_counts[unique(sig_genes),]
+mat <- mat[!rowSums(!is.finite(mat)),]
+mat[!is.finite(mat)] <- 0
+
+ann_cols = list(Samples = col.pal$sample, Groups = col.pal$group)
+
+p <- pheatmap::pheatmap(mat = mat, 
+                  annotation_col = meta,
+                  annotation_colors = ann_cols,
+                  clustering_method = "complete",
+                  treeheight_row = 0,
+                  #treeheight_col = 0,
+                  cluster_row = T,
+                  cluster_col = F,
+                  show_rownames = T,
+                  show_colnames = F, 
+                  scale = 'row',
+                  legend = T,
+                  annotation_legend = F,
+                  fontsize = 12,
+                  border_color = NA,
+                  fontsize_col = 10,
+                  main = paste("MacroCD68"),
+                  name = "Scaled exp.",
+                  color = colorRampPalette(c("Darkblue", "white","red"))(100)
+    )
+
+
+save_pheatmap_pdf(x = p, filename = paste0(out.dir, "PB/MacroCD68.pdf"), width = 4, height = 9)
+
+
+```
+
+
+
+# Gènes de la voie BMP/TGFb
+
+```{r}
+
+genes <- c("ACVR1", "ACVR1B", "ACVR2A", "ACVR2B", "ACVRL1", "BMPR1A", "BMPR1B","BMPR2")
+Dot_Plot(sobj = htap, features = genes, x.lab.rotate = T, flip.axes = T, base.size = 10, theme.bw = T, split.by = "group", colors.use = col.pal$group)
+
+DotPlot(object = htap, features = genes, group.by = "celltype", 
+        idents = c("aCap", "gCap", "Art","AlvFibro","AdvFibro","Peri","MacroATP10A","MacroCD68"),
+        split.by = "group", cols = col.pal$group, ) + coord_flip() + theme(axis.text.x  = element_text(angle = 90, hjust = 1, vjust = 0.5))
+
+ggsave(paste0(out.dir, "dotplot_population_markers.pdf"), useDingbats = F, dpi = 200, width = 2.5, height = 11)
+
+
+```
+
+
+
+```{r fig.width=4, fig.height=8}
+
+StackedVlnPlot(obj = htap, angle.x = 90,
+                 features = genes,
+                 group.by = "celltype_order", 
+                 split.by = "group", 
+               idents = c("aCap", "gCap", "Art","AlvFibro","AdvFibro","Peri","MacroATP10A","MacroCD68"),
+                 #color.text.x = col.pal$celltype,
+                 color.use = col.pal$group)
+  
+ggsave(paste0(out.dir, "BMP_TGF_recptors.pdf"), width = 4, height = 8, useDingbats = F)
+
+```
+
+

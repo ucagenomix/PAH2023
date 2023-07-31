@@ -1,0 +1,689 @@
+---
+title: "10x PAH NucSeq - Gene Markers Identification"
+author: '[Yvon Mbouamboua](mbouamboua@ipmc.cnrs.fr)'
+output:
+  html_document: default
+  html_notebook: default
+date: 'Compiled: `r Sys.Date()`'
+---
+
+# Setting parameters
+
+```{r setup, include=T, warning=F, message=F}
+
+options(future.globals.maxSize = 80000*1024^2)
+main.dir <- "/data/data_mbouamboua/projects/10x_htap_nucseq/"
+out.dir <- paste0(main.dir, "004_outs/005_DE_markers/")
+if(!dir.exists(out.dir)){dir.create(file.path(out.dir), recursive = T, showWarnings = F)}
+set.seed(4743)
+
+```
+
+# Require R packages and sources
+
+
+```{r warning=F, message=F}
+
+source("/data/data_mbouamboua/apps/Rpkgs/Rpkgs.R")
+source("/data/data_mbouamboua/tools/utilities.R")
+source("/data/data_mbouamboua/tools/visualization.R")
+source("/data/data_mbouamboua/tools/differential_expression.R")
+col.pal <- readRDS(paste0(main.dir, "003_data_objects/col.pal.rds"))
+set.seed(4743)
+
+```
+
+
+# Loading and filter data quality for DE analysis
+
+```{r}
+
+htap <- readRDS(paste0(main.dir, "003_data_objects/htap.rds"))
+invisible(gc())
+DefaultAssay(htap) <- "RNA"
+Idents(htap) <- "seurat_clusters"
+# Remove cluster 42 (cancer cells)
+htap <- subset(htap, idents = 42, invert = T)
+# Remove undetected genes
+counts <- GetAssayData(htap, assay = "RNA", slot = "counts")
+counts <- counts[rowSums(counts > 0) > 0, ]
+# Remove undesirable genes
+features.to.exclude <- grep(pattern = "^MT-|^MTRNR|^RP[LS][[:digit:]]|^RP[LP][[:digit:]]|^RPL[[:digit:]]|
+                                 ^RPLP[[:digit:]]|^HB[^(P)]|MALAT1|FTL|FTH1|^RNA18S5|^RNA28S5|XIST|RPS4Y1|AC006157.1|
+                                 ZFY|ZFY-AS1|LINC00278|PCDH11Y|USP9Y|DDX3Y|UTY|TMSB4Y|TTTY14|
+                                 AC010889.1|KDM5D|EIF1AY|RPS4Y2", x = rownames(x = htap@assays$RNA@counts), value = T) 
+counts <- counts[-(which(rownames(counts) %in% features.to.exclude)),]
+htap <- subset(htap, features = rownames(counts))
+# Remove lowly expressed genes
+min.cells = 3
+selected.features <- rownames(htap)[Matrix::rowSums(htap) > min.cells]
+# Filter data
+htap <- subset(htap, features = selected.features)
+htap <- NormalizeData(htap)
+rm(counts, features.to.exclude,selected.features, min.cells)
+dim(htap)
+saveRDS(htap, paste0(main.dir, "003_data_objects/htap.filt.rds"))
+
+```
+
+
+
+# Define colors
+
+```{r fig.width=10, fig.height=7,message=F, warning=F}
+
+col.pal <- list()
+col.pal$endothelial <- c("aCap"="#00bbf9","gCap"="#0466c8","ArtEC"="#6096ba","V-PulmEC"="#657ed4","V-SysEC"="#abc4ff","Lymph"="#124e78")
+
+col.pal$epithelial <- c("Basal"="#7209b7","MCC"="#b5179e","PNEC"="#d0d1ff","Pre-TB-SC"="#480ca8","TRB-SC"="#9d4edd","AT0"="#e0aaff","AT2a"="#6a4c93","AT2b"="#7678ed","AT1-AT2"="#a5668b","AT1-imm"="#a6808c","AT1"="#4d194d")
+
+col.pal$stromal <- c("AdvFibro"="#ef6351","AlvFibro"="#d58936","MyoFibro"="#69140e","ASMC"="#fbc3bc","Peri"="#9c6644","VSMC"="#d81159")
+
+col.pal$immune <- c("MacroATP10A"="#006466","MacroCD68"="#ffd29d","Macro-prolif"="#60d394","DC1"="#d6ce93","DC2"="#758e4f","Mono"="#b1cc74","Inter-Macro"="#38b000","CD4"="#7c6a0a","CD8"="#bcbd8b","T-prolif"="#80ffdb","NK"="#e8fcc2","Mast"="#4f6d7a","Plasma"="#829399","pDC"="#25ced1","B"="#fffbbd","Megak"="#006400")
+
+col.pal$celltype <- c(col.pal$epithelial, col.pal$endothelial, col.pal$stromal, col.pal$immune)
+
+col.pal$population <- c("Endothelial"="#0077b6","Epithelial"="#5e548e","Immune"="#606c38", "Stroma"="#bb3e03")
+
+col.pal$group <- c("CTRL"="#006E82","PAH"="#AA0A3C")
+
+col.pal$sample <- c("PAH.D510"="#6E1631", "PAH.D511"="#8E1C3E", "PAH.D512"="#BD345E", "PAH.D513"="#DB5D6C", "PAH.D514"="#E27D89", "PAH.D532"="#E99EA7", "PAH.D533"="#F0BEC4", "CTRL.D505"="#B6D5D9", "CTRL.D506"="#92C1C6", "CTRL.D507"="#6DACB3", "CTRL.D508"="#4998A1", "CTRL.D509"="#297B71","CTRL.D530"="#1B6B61", "CTRL.D531"="#145049")
+
+
+Epithelial <- c("AT0","AT2b","AT2a","AT1-AT2","AT1-imm","AT1","Basal","Pre-TB-SC","TRB-SC","MCC","PNEC")
+Endothelial <- c("aCap","gCap","V-PulmEC","V-SysEC","Lymph","ArtEC")
+Stromal <- c("ASMC","VSMC","AlvFibro","AdvFibro","MyoFibro","Peri")
+Immune <- c("CD8","Inter-Macro","CD4","DC2", "MacroATP10A","MacroCD68","Mast","DC1","NK","B","Plasma","Mono","pDC","Megak","Macro-prolif","T-prolif")
+
+htap@meta.data$celltype_order <- factor(htap@meta.data$celltype, levels = c(Endothelial,Stromal,Epithelial,Immune))
+
+Epi <- c("AT0: alveolar epithelial type 0",
+         "AT2a: alveolar epithelial type 2a",
+         "AT2b: alveolar epithelial type 2b",
+         "AT1-AT2",
+         "AT1-imm: immature alveolar epithelial type 1",
+         "AT1: alveolar epithelial type 1",
+         "Basal",
+         "Pre-TB-SC: pre-terminal bronchiole secretory cells",
+         "TRB-SC: terminal and respiratory bronchiole secretory cells",
+         "MCC: multiciliated cells",
+         "PNEC: pulmonary neuroendocrine cells"
+)
+
+Endo <- c("aCap: aerocyte capillary endothelial cells", 
+          "gCap: general capillary endothelial cells",
+          "V-PulmEC: venous pulmonary endothelial cells",
+          "V-SysEC: venous systemic endothelial cells",
+          "Lymph: lymphatic endothelial cells",
+          "ArtEC: arterial endothelial cells")
+
+
+Imm <- c("CD8: lymphocyte CD8+ T cells",
+         "Inter-Macro: interstitial macrophages",
+         "CD4: lymphocyte CD4+ T cells",
+         "DC2: dendritic cells type2",
+         "MacroATP10A: macrophages ATP10A high",
+         "MacroCD68: macrophages CD68 high",
+         "Mast: mastocytes",
+         "DC1: dendritic cells type1",
+         "NK: natural killer cells",
+         "B: lymphocyte B cells",
+         "Plasma",
+         "Mono: monocytes",
+         "pDC: plasmacytoid dendritic cells",
+         "Megak: megakaryocytes",
+         "Macro-prolif: macrophages proliferating",
+         "T-prolif: lymphocyte T cells proliferating"
+)
+
+Stro <- c("ASMC: airway smooth muscle cells",
+          "VSMC: vascular smooth muscle cells",
+          "AlvFibro: alveolar fibroblasts",
+          "AdvFibro: adventitial fibroblasts",
+          "MyoFibro: myofibroblasts",
+          "Peri: pericytes"
+)
+
+htap@meta.data$full_name_order <- factor(htap@meta.data$full_name, levels = c(Endo,Stro,Epi,Imm))
+
+```
+
+# UMAP
+
+```{r fig.width=14, fig.height=12,message=F, warning=F}
+
+Dim_Plot(obj = htap,  group.by = "celltype_order", colors.use = col.pal$celltype,
+         pt.size = 0.01, figure.plot = T,  legend = T,theme.bw = F, label.show = T, key.size = 6, base.size = 16, label.size = 6)
+
+ggsave(paste0(out.dir, "umap_celltype_legend.pdf"), useDingbats = F, width = 14, height = 12,  dpi = 320)
+
+```
+
+
+
+```{r fig.width=2, fig.height=12}
+
+# Plot_Stats(sobj = htap, plot.type = "prop_fill", group.by = "celltype_order",ident = "group",
+#           tilt.text = F, text.size = 6,pal.setup = col.pal$group) + 
+#   xlab(" ") + theme_classic() + coord_flip() +
+#   theme(axis.text.x = element_text(angle = 90, vjust = 0.5,hjust = 1, colour = "black", size = 10),
+#         axis.text.y = element_text(colour = "black", size = 10),
+#         axis.title.y = element_text(size = 8),
+#         axis.title = element_text(size = 10),
+#         legend.text = element_text(size = 5),
+#         legend.position = "none",
+#         legend.box.margin = margin(0,0,0,-10),
+#         legend.key.height = unit(0.2, 'cm'),
+#         legend.key.width = unit(0.2, 'cm')) +
+#       scale_x_discrete(limits=rev) 
+# ggsave(paste0(out.dir, "barplot_celltype_prop_per_group.pdf"), useDingbats = F, width = 7, height = 2,  dpi = 320)
+# 
+
+
+Idents(htap) <- "celltype_order"
+freq_table <- prop.table(x = t(table(htap@active.ident, htap@meta.data[, "group"])), margin = 2)*100
+formattable(freq_table)
+freq_table <- melt(freq_table)
+
+ggplot(freq_table, aes(fill=Var1, y=value, x=Var2)) + 
+  geom_bar(position="stack", stat="identity", colour = "black") + 
+  theme_void() +
+  labs(x="", y="Cell type prop.", fill = "group") +
+  theme(#axis.text.x = element_text(angle = 0, vjust = 1, hjust=0.5, colour = "black"), 
+        axis.text.x = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks = element_blank(),
+        legend.position = "none",
+        legend.key.size = unit(0.3, "cm")) + 
+  geom_text(aes(label = round(value, digits = 1)), size = 3, colour = "white",
+            position = position_stack(vjust = 0.5)) + coord_flip() +
+     scale_fill_manual(name = ' ', values =  col.pal$group) +
+   scale_x_discrete(limits=rev)
+
+ggsave(paste0(out.dir, "barplot_celltype_prop_per_group.pdf"), useDingbats = F, width = 2, height = 12,  dpi = 320)
+
+```
+
+
+
+
+
+
+```{r fig.width=12, fig.height=12,message=F, warning=F}
+
+Dim_Plot(obj = htap,  group.by = "celltype_order", cell.name = "full_name_order", colors.use = col.pal$celltype,
+         pt.size = 0.01, figure.plot = T,  legend = F,theme.bw = F, label.show = T, key.size = 6, base.size = 16, label.size = 6) 
+
+ggsave(paste0(out.dir, "umap_celltype_nolegend.pdf"), useDingbats = F, width = 1200, height = 1200,  dpi = 320, units = "cm",limitsize = FALSE)
+
+```
+
+
+
+
+# DE population
+
+
+```{r fig.width=9, fig.height=8.5}
+
+invisible(gc())
+markers <- Get_Markers(obj = htap, group.by = "population", test_use = "wilcox", max.cells.per.ident = 500)
+write.table(markers, paste0(out.dir, "population_markers.tsv"), sep = "\t", row.names = F, quote = F)
+markers <- read.delim(paste0(out.dir, "population_markers.tsv"), sep = "\t")
+top <- markers %>% group_by(cluster) %>% top_n(n = 20, wt = avg_log2FC)
+
+Idents(htap) <- "population"
+Dot_Plot(sobj = htap, features = rev(top$gene), x.lab.rotate = T, flip.axes = T, base.size = 10, theme.bw = T)
+ggsave(paste0(out.dir, "population_markers.pdf"), width = 2.5, height = 11)
+
+## Heatmap
+
+sample.order <- c("CTRL.D505" ,"CTRL.D506","CTRL.D507", "CTRL.D508", "CTRL.D509",  "CTRL.D530", "CTRL.D531","PAH.D510","PAH.D511" ,"PAH.D512", "PAH.D513","PAH.D514", "PAH.D532", "PAH.D533")
+population.order <- c("Epithelial", "Stroma" ,"Immune","Endothelial")
+
+anno.colors = list(sample = col.pal$sample, population = col.pal$population)
+
+markers <- read.delim(paste0(out.dir, "population_markers.tsv"), sep = "\t")
+top <- markers %>% group_by(cluster) %>% top_n(n = 20, wt = avg_log2FC)
+
+avg <- AverageExpression(object = htap, group.by = c("sample","population"), return.seurat = T, assay = "RNA")
+genes <- intersect(top$gene, rownames(avg@assays$RNA@counts))
+avg <- as.matrix(avg@assays$RNA@scale.data[genes,])
+
+anno <- as.data.frame(str_split_fixed(colnames(avg), "_", n = 2))
+rownames(anno) <- colnames(avg)
+colnames(anno) <- c("sample","population")
+anno$sample <- factor(anno$sample,levels = sample.order)
+anno$population <- factor(anno$population, levels = population.order)
+anno <- arrange(anno,population,sample)
+avg <- avg[,match(rownames(anno), colnames(avg))]
+#avg[is.na(avg)] <- 0
+
+p <- pheatmap(mat = avg, 
+              annotation_col = anno,
+              annotation_colors = anno.colors,
+              scale = 'row',
+              cluster_row = F,
+              cluster_col = F,
+              show_rownames = T,
+              show_colnames = F,
+              legend = T,
+              annotation_legend = T,
+              fontsize = 8,
+              name = "avgerage\nexpression",
+              color = colorRampPalette(c("Darkblue", "white","red"))(100)
+)
+
+print(p)
+
+
+pdf(paste0(out.dir, "heatmap_population_markers.pdf"),width = 8, height = 8.5, useDingbats = F)
+print(p)
+dev.off()
+
+```
+
+
+# Epithelial subset
+
+
+```{r fig.width=15, fig.height=7}
+
+Idents(htap) <- "population"
+sub <- subset(htap, idents = "Epithelial")
+sub <- New_Seurat(obj = sub, nfeatures = 3000, resolution = 0.2)
+#saveRDS(sub, paste0(main.dir, "003_data_objects/epithelial.rds"))
+Dim_Plot(obj = sub, group.by = "celltype", label.show = T, colors.use = col.pal$epi, 
+         theme.bw = F, legend = F,figure.plot = T)
+
+## DE celltype
+
+invisible(gc())
+markers <- Get_Markers(obj = sub, group.by = "celltype", test_use = "wilcox", max.cells.per.ident = 500)
+write.table(markers, paste0(out.dir, "epithelial_markers.tsv"), sep = "\t", row.names = F, quote = F)
+markers <- read.delim(paste0(out.dir, "epithelial_markers.tsv"), sep = "\t")
+top <- markers %>% group_by(cluster) %>% top_n(n = 5, wt = avg_log2FC)
+Idents(sub) <- "celltype"
+Dot_Plot(sobj = sub, features = rev(top$gene), x.lab.rotate = T, flip.axes = T, base.size = 10, theme.bw = F) 
+ggsave(paste0(out.dir, "epithelial_markers.pdf"), width = 4, height = 7, dpi = 50)
+invisible(gc())
+
+
+sample.order <- c("CTRL.D505" ,"CTRL.D506","CTRL.D507", "CTRL.D508", "CTRL.D509",  "CTRL.D530", "CTRL.D531","PAH.D510","PAH.D511" ,"PAH.D512", "PAH.D513","PAH.D514", "PAH.D532", "PAH.D533")
+celltype.order <- c("AT2b","AT2a","AT1","Basal","AT1-AT2","Pre-TB-SC","AT0","MCC","TRB-SC","AT1-imm","PNEC")
+anno.colors = list(celltype = col.pal$epi, sample = col.pal$sample)
+
+markers <- read.delim(paste0(out.dir, "epithelial_markers.tsv"), sep = "\t")
+top <- markers %>% group_by(cluster) %>% top_n(n = 5, wt = avg_log2FC)
+
+avg <- AverageExpression(object = sub, group.by = c("sample","celltype"), return.seurat = T, assay = "RNA")
+genes <- intersect(top$gene, rownames(avg@assays$RNA@counts))
+avg <- as.matrix(avg@assays$RNA@scale.data[genes,])
+
+anno <- as.data.frame(str_split_fixed(colnames(avg), "_", n = 2))
+rownames(anno) <- colnames(avg)
+colnames(anno) <- c("sample","celltype")
+anno$sample <- factor(anno$sample,levels = sample.order)
+anno$celltype <- factor(anno$celltype, levels = celltype.order)
+anno <- arrange(anno,celltype,sample)
+avg <- avg[,match(rownames(anno), colnames(avg))]
+#avg[is.na(avg)] <- 0
+
+p <- pheatmap(mat = avg, 
+              annotation_col = anno,
+              annotation_colors = anno.colors,
+              scale = 'row',
+              cluster_row = F,
+              cluster_col = F,
+              show_rownames = T,
+              show_colnames = F,
+              legend = T,
+              annotation_legend = T,
+              fontsize = 8,
+              name = "avgerage\nexpression",
+              breaks=seq(-3,3, length.out = 101),
+              color = colorRampPalette(c("Darkblue", "white","red"))(100)
+)
+
+print(p)
+
+pdf(paste0(out.dir, "heatmap_epithelial_markers.pdf"), width = 15, height = 7, useDingbats = F)
+print(p)
+dev.off()
+
+```
+
+
+# Endothelial subset
+
+```{r fig.width=10, fig.height=7}
+
+Idents(htap) <- "population"
+sub <- subset(htap, idents = "Endothelial")
+sub <- New_Seurat(obj = sub, nfeatures = 3000, resolution = 0.2)
+saveRDS(sub, paste0(main.dir, "003_data_objects/endothelial.rds"))
+Dim_Plot(obj = sub, group.by = "celltype", label.show = T, colors.use = col.pal$endo, 
+         theme.bw = F, legend = F,figure.plot = T)
+
+## DE celltype
+
+invisible(gc())
+markers <- Get_Markers(obj = sub, group.by = "celltype", test_use = "wilcox", max.cells.per.ident = 500)
+write.table(markers, paste0(out.dir, "endothelial_markers.tsv"), sep = "\t", row.names = F, quote = F)
+
+## Dotplot
+
+markers <- read.delim(paste0(out.dir, "endothelial_markers.tsv"), sep = "\t")
+top <- markers %>% group_by(cluster) %>% top_n(n = 5, wt = avg_log2FC)
+Idents(sub) <- "celltype"
+Dot_Plot(sobj = sub, features = rev(top$gene), x.lab.rotate = T, flip.axes = T, base.size = 10, theme.bw = F) 
+ggsave(paste0(out.dir, "endothelial_markers.pdf"), width = 3.5, height = 5, dpi = 50)
+invisible(gc())
+
+## Heatmap
+
+sample.order <- c("CTRL.D505" ,"CTRL.D506","CTRL.D507", "CTRL.D508", "CTRL.D509",  "CTRL.D530", "CTRL.D531","PAH.D510","PAH.D511" ,"PAH.D512", "PAH.D513","PAH.D514", "PAH.D532", "PAH.D533")
+celltype.order <- c("aCap","gCap","V-Pulm","V-Sys","Lymph","Art")
+anno.colors = list(celltype = col.pal$endo, sample = col.pal$sample)
+
+markers <- read.delim(paste0(out.dir, "endothelial_markers.tsv"), sep = "\t")
+top <- markers %>% group_by(cluster) %>% top_n(n = 10, wt = avg_log2FC)
+
+avg <- AverageExpression(object = sub, group.by = c("sample","celltype"), return.seurat = T, assay = "RNA")
+genes <- intersect(top$gene, rownames(avg@assays$RNA@counts))
+avg <- as.matrix(avg@assays$RNA@scale.data[genes,])
+
+anno <- as.data.frame(str_split_fixed(colnames(avg), "_", n = 2))
+rownames(anno) <- colnames(avg)
+colnames(anno) <- c("sample","celltype")
+anno$sample <- factor(anno$sample,levels = sample.order)
+anno$celltype <- factor(anno$celltype, levels = celltype.order)
+anno <- arrange(anno,celltype,sample)
+avg <- avg[,match(rownames(anno), colnames(avg))]
+#avg[is.na(avg)] <- 0
+
+p <- pheatmap(mat = avg, 
+              annotation_col = anno,
+              annotation_colors = anno.colors,
+              scale = 'row',
+              cluster_row = F,
+              cluster_col = F,
+              show_rownames = T,
+              show_colnames = F,
+              legend = T,
+              annotation_legend = T,
+              fontsize = 8,
+              name = "avgerage\nexpression",
+              breaks=seq(-3,3, length.out = 101),
+              color = colorRampPalette(c("Darkblue", "white","red"))(100),
+)
+
+print(p)
+
+pdf(paste0(out.dir, "heatmap_endothelial_markers.pdf"),width = 10, height = 7, useDingbats = F)
+print(p)
+dev.off()
+
+```
+
+
+
+# Stromal subset
+
+```{r fig.width=10, fig.height=7}
+
+Idents(htap) <- "population"
+sub <- subset(htap, idents = "Stroma")
+sub <- New_Seurat(obj = sub, nfeatures = 3000, resolution = 0.2)
+saveRDS(sub, paste0(main.dir, "003_data_objects/stromal.rds"))
+Dim_Plot(obj = sub, group.by = "celltype", label.show = T, colors.use = col.pal$stroma, theme.bw = F, legend = F,figure.plot = T)
+
+## DE celltype
+
+invisible(gc())
+markers <- Get_Markers(obj = sub, group.by = "celltype", test_use = "wilcox", max.cells.per.ident = 500)
+write.table(markers, paste0(out.dir, "stromal_markers.tsv"), sep = "\t", row.names = F, quote = F)
+
+## Dotplot
+
+markers <- read.delim(paste0(out.dir, "stromal_markers.tsv"), sep = "\t")
+top <- markers %>% group_by(cluster) %>% top_n(n = 10, wt = avg_log2FC)
+Idents(sub) <- "celltype"
+Dot_Plot(sobj = sub, features = rev(top$gene), x.lab.rotate = T, flip.axes = T, base.size = 10, theme.bw = F) 
+ggsave(paste0(out.dir, "dotplot_stromal_markers.pdf"), width = 3.5, height = 8, dpi = 50)
+invisible(gc())
+
+
+## Heatmap
+
+sample.order <- c("CTRL.D505" ,"CTRL.D506","CTRL.D507", "CTRL.D508", "CTRL.D509",  "CTRL.D530", "CTRL.D531","PAH.D510","PAH.D511" ,"PAH.D512", "PAH.D513","PAH.D514", "PAH.D532", "PAH.D533")
+celltype.order <- c("VSMC","AlvFibro","AdvFibro","ASMC","MyoFibro","Peri")
+anno.colors = list(celltype = col.pal$stroma, sample = col.pal$sample)
+
+markers <- read.delim(paste0(out.dir, "stromal_markers.tsv"), sep = "\t")
+top <- markers %>% group_by(cluster) %>% top_n(n = 10, wt = avg_log2FC)
+
+avg <- AverageExpression(object = sub, group.by = c("sample","celltype"), return.seurat = T, assay = "RNA")
+genes <- intersect(top$gene, rownames(avg@assays$RNA@counts))
+avg <- as.matrix(avg@assays$RNA@scale.data[genes,])
+
+anno <- as.data.frame(str_split_fixed(colnames(avg), "_", n = 2))
+rownames(anno) <- colnames(avg)
+colnames(anno) <- c("sample","celltype")
+anno$sample <- factor(anno$sample,levels = sample.order)
+anno$celltype <- factor(anno$celltype, levels = celltype.order)
+anno <- arrange(anno,celltype,sample)
+avg <- avg[,match(rownames(anno), colnames(avg))]
+#avg[is.na(avg)] <- 0
+
+p <- pheatmap(mat = avg, 
+              annotation_col = anno,
+              annotation_colors = anno.colors,
+              scale = 'row',
+              cluster_row = F,
+              cluster_col = F,
+              show_rownames = T,
+              show_colnames = F,
+              legend = T,
+              annotation_legend = T,
+              fontsize = 8,
+              breaks=seq(-3,3, length.out = 101),
+              name = "avgerage\nexpression",
+              color = colorRampPalette(c("Darkblue", "white","red"))(100),
+)
+
+print(p)
+
+pdf(paste0(out.dir, "heatmap_stromal_markers.pdf"),width = 10, height = 7, useDingbats = F)
+print(p)
+dev.off()
+
+```
+
+
+# Immune subset
+
+```{r fig.width=16, fig.height=16}
+
+Idents(htap) <- "population"
+sub <- subset(htap, idents = "Immune")
+sub <- New_Seurat(obj = sub, nfeatures = 3000, resolution = 0.2)
+saveRDS(sub, paste0(main.dir, "003_data_objects/immune.rds"))
+Dim_Plot(obj = sub, group.by = "celltype", label.show = T, colors.use = col.pal$imm, theme.bw = F, legend = F,figure.plot = T)
+
+
+## DE celltype
+
+invisible(gc())
+markers <- Get_Markers(obj = sub, group.by = "celltype", test_use = "wilcox", max.cells.per.ident = 500)
+write.table(markers, paste0(out.dir, "immune_markers.tsv"), sep = "\t", row.names = F, quote = F)
+
+## Dotplot
+
+markers <- read.delim(paste0(out.dir, "immune_markers.tsv"), sep = "\t")
+top <- markers %>% group_by(cluster) %>% top_n(n = 10, wt = avg_log2FC)
+Idents(sub) <- "celltype"
+Dot_Plot(sobj = sub, features = rev(top$gene), x.lab.rotate = T, flip.axes = T, base.size = 10, theme.bw = F) 
+ggsave(paste0(out.dir, "dotplot_immune_markers.pdf"), width = 5, height = 20, dpi = 50)
+invisible(gc())
+
+## Heatmap
+
+sample.order <- c("CTRL.D505" ,"CTRL.D506","CTRL.D507", "CTRL.D508", "CTRL.D509",  "CTRL.D530", "CTRL.D531","PAH.D510","PAH.D511" ,"PAH.D512", "PAH.D513","PAH.D514", "PAH.D532", "PAH.D533")
+celltype.order <- c("CD8","Inter-Macro","CD4","DC2", "AM1","AM2","Mast","DC1","NK","B","Plasma","Mono","pDC","Megak","AM-prolif","T-prolif")
+anno.colors = list(celltype = col.pal$imm, sample = col.pal$sample)
+
+markers <- read.delim(paste0(out.dir, "immune_markers.tsv"))
+top <- markers %>% group_by(cluster) %>% top_n(n = 10, wt = avg_log2FC)
+
+avg <- AverageExpression(object = sub, group.by = c("sample","celltype"), return.seurat = T, assay = "RNA")
+genes <- intersect(top$gene, rownames(avg@assays$RNA@counts))
+avg <- as.matrix(avg@assays$RNA@scale.data[genes,])
+
+anno <- as.data.frame(str_split_fixed(colnames(avg), "_", n = 2))
+rownames(anno) <- colnames(avg)
+colnames(anno) <- c("sample","celltype")
+anno$sample <- factor(anno$sample,levels = sample.order)
+anno$celltype <- factor(anno$celltype, levels = celltype.order)
+anno <- arrange(anno,celltype,sample)
+avg <- avg[,match(rownames(anno), colnames(avg))]
+#avg[is.na(avg)] <- 0
+
+p <- pheatmap(mat = avg, 
+              annotation_col = anno,
+              annotation_colors = anno.colors,
+              scale = 'row',
+              cluster_row = F,
+              cluster_col = F,
+              show_rownames = T,
+              show_colnames = F,
+              legend = T,
+              annotation_legend = T,
+              fontsize = 8,
+              name = "avgerage\nexpression",
+              breaks=seq(-3,3, length.out = 101),
+              color = colorRampPalette(c("Darkblue", "white","red"))(100)
+)
+
+print(p)
+
+pdf(paste0(out.dir, "heatmap_immune_markers.pdf"),width = 16, height = 16, useDingbats = F)
+print(p)
+dev.off()
+
+```
+
+
+# DE celltype
+
+```{r fig.width=8, fig.height=11}
+
+# invisible(gc())
+# markers <- Get_Markers(obj = htap, group.by = "celltype", test_use = "wilcox", max.cells.per.ident = 500)
+# write.table(markers, paste0(out.dir, "celltype_markers.tsv"), sep = "\t", row.names = F, quote = F)
+# markers <- read.delim(paste0(out.dir, "celltype_markers.tsv"), sep = "\t")
+# top <- markers %>% group_by(cluster) %>% top_n(n = 5, wt = avg_log2FC)
+
+# Idents(htap) <- "celltype"
+# Dot_Plot(sobj = htap, features = rev(top$gene), x.lab.rotate = T, flip.axes = T, base.size = 10, theme.bw = T)
+# ggsave(paste0(out.dir, "celltype_markers.png"), width = 10, height = 30, dpi = 200)
+# invisible(gc())
+
+## Heatmap
+
+# Epithelial <- c("AT0","AT2a","AT2b","Basal","MCC","PNEC","Pre-TB-SC","TRB-SC","AT1-AT2","AT1-imm","AT1")
+# Endothelial <- c("aCap","gCap","V-PulmEC","V-SysEC","Lymph","ArtEC")
+# Immune <- c("MacroATP10A", "MacroCD68","Macro-prolif","DC1","DC2","Mono","Inter-Macro","CD4","CD8","T-prolif","NK","Mast","Plasma","pDC","B","Megak")
+# Stromal <- c("ASMC","VSMC","MyoFibro","AlvFibro","AdvFibro","Peri")
+
+Epithelial <- c("AT0","AT2b","AT2a","AT1-AT2","AT1-imm","AT1","Basal","Pre-TB-SC","TRB-SC","MCC","PNEC")
+Endothelial <- c("aCap","gCap","V-PulmEC","V-SysEC","Lymph","ArtEC")
+Stromal <- c("ASMC","VSMC","AlvFibro","AdvFibro","MyoFibro","Peri")
+Immune <- c("CD8","Inter-Macro","CD4","DC2", "MacroATP10A","MacroCD68","Mast","DC1","NK","B","Plasma","Mono","pDC","Megak","Macro-prolif","T-prolif")
+
+col.pal <- list()
+col.pal$epithelial <- c("AT0"="#e0aaff","AT2a"="#6a4c93","AT2b"="#7678ed","AT1-AT2"="#a5668b","AT1-imm"="#a6808c","AT1"="#4d194d","Basal"="#7209b7","Pre-TB-SC"="#480ca8","TRB-SC"="#9d4edd","MCC"="#b5179e","PNEC"="#d0d1ff")
+col.pal$endothelial <- c("aCap"="#00bbf9","gCap"="#0466c8","V-PulmEC"="#657ed4","V-SysEC"="#abc4ff","Lymph"="#124e78","ArtEC"="#6096ba")
+col.pal$stromal <- c("ASMC"="#fbc3bc","VSMC"="#d81159","AlvFibro"="#d58936","AdvFibro"="#ef6351","MyoFibro"="#69140e","Peri"="#9c6644")
+col.pal$immune <- c("CD8"="#bcbd8b","Inter-Macro"="#38b000","CD4"="#7c6a0a","DC2"="#758e4f","MacroATP10A"="#006466","MacroCD68"="#ffd29d","Mast"="#4f6d7a","DC1"="#d6ce93","NK"="#e8fcc2","B"="#fffbbd","Plasma"="#829399","Mono"="#b1cc74","pDC"="#25ced1","Megak"="#006400","Macro-prolif"="#60d394","T-prolif"="#80ffdb")
+col.pal$celltype <- c(col.pal$endothelial, col.pal$stromal, col.pal$epithelial, col.pal$immune)
+col.pal$population <- setNames(c("#0077b6","#5e548e","#606c38", "#bb3e03"), c("Endothelial","Epithelial","Immune","Stroma"))
+col.pal$group <- setNames(c("#006E82","#AA0A3C"), c("CTRL", "PAH"))
+col.pal$sample <- setNames(c("#6E1631", "#8E1C3E", "#BD345E", "#DB5D6C", "#E27D89", "#E99EA7", "#F0BEC4", "#B6D5D9", "#92C1C6", "#6DACB3", "#4998A1", "#297B71","#1B6B61", "#145049"), c("PAH.D510","PAH.D511" ,"PAH.D512", "PAH.D513","PAH.D514", "PAH.D532", "PAH.D533",  "CTRL.D505" ,"CTRL.D506","CTRL.D507", "CTRL.D508", "CTRL.D509",  "CTRL.D530", "CTRL.D531"))
+
+markers <- read.delim(paste0(out.dir, "epithelial_markers.tsv"))
+top_epi <- markers %>% group_by(cluster) %>% top_n(n = 2, wt = avg_log2FC)
+markers <- read.delim(paste0(out.dir, "endothelial_markers.tsv"))
+top_endo <- markers %>% group_by(cluster) %>% top_n(n = 2, wt = avg_log2FC)
+markers <- read.delim(paste0(out.dir, "stromal_markers.tsv"))
+top_stroma <- markers %>% group_by(cluster) %>% top_n(n = 2, wt = avg_log2FC)
+markers <- read.delim(paste0(out.dir, "immune_markers.tsv"))
+top_imm <- markers %>% group_by(cluster) %>% top_n(n = 2, wt = avg_log2FC)
+top <- rbind(top_endo,top_stroma,top_epi,top_imm)
+
+sample.order <- c("CTRL.D505" ,"CTRL.D506","CTRL.D507", "CTRL.D508", "CTRL.D509",  "CTRL.D530", "CTRL.D531","PAH.D510","PAH.D511" ,"PAH.D512", "PAH.D513","PAH.D514", "PAH.D532", "PAH.D533")
+celltype.order <- c(Endothelial,Stromal,Epithelial, Immune)
+
+anno.colors = list("Cell types" = col.pal$celltype, "Samples" = col.pal$sample)
+
+avg <- AverageExpression(object = htap, group.by = c("sample","celltype"), return.seurat = TRUE, assay = "RNA")
+genes <- intersect(top$gene, rownames(avg@assays$RNA@counts))
+avg <- as.matrix(avg@assays$RNA@scale.data[genes,])
+
+anno <- as.data.frame(str_split_fixed(colnames(avg), "_", n = 2))
+rownames(anno) <- colnames(avg)
+colnames(anno) <- c("Samples","Cell types")
+anno$Samples <- factor(anno$Samples,levels = sample.order)
+anno$`Cell types` <- factor(anno$`Cell types`, levels = celltype.order)
+anno <- arrange(anno,`Cell types`,Samples)
+avg <- avg[,match(rownames(anno), colnames(avg))]
+#avg[is.na(avg)] <- 0
+
+p <- pheatmap::pheatmap(mat = avg, 
+              annotation_col = anno,
+              annotation_colors = anno.colors,
+              scale = 'row',
+              cluster_row = F,
+              cluster_col = F,
+              show_rownames = T,
+              show_colnames = F,
+              legend = T,
+              annotation_legend = F,
+              fontsize = 12,
+              border_color = NA,
+              #fontfamily = "Arial",
+              name = "Avgerage\nexpression",
+              breaks=seq(-3,3, length.out = 101),
+              color = colorRampPalette(c("Darkblue", "white","red"))(100)
+)
+
+print(p)
+
+
+save_pheatmap_pdf <- function(x, filename, width=7, height=7, useDingbats = FALSE) {
+   stopifnot(!missing(x))
+   stopifnot(!missing(filename))
+   pdf(filename, width=width, height=height,useDingbats = useDingbats)
+   #grid::grid.newpage()
+   grid::grid.draw(x$gtable)
+   #print(x)
+   dev.off()
+}
+
+save_pheatmap_pdf(x = p, filename = paste(out.dir, "heatmap_celltype_markers.pdf", sep = "/"), width = 8, height = 15)
+
+```
+
+
+
+
+
+# Session info
+
+```{r session_info} 
+
+utils::capture.output(devtools::session_info())
+
+```
+
+

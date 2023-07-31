@@ -1,0 +1,1237 @@
+---
+title: "10x PAH NucSeq - CellChat"
+author: "Yvon Mbouamboua<BR>mbouamboua@ipmc.cnrs.fr"
+date: 'Compiled: `r Sys.Date()`'
+output:
+  rmdformats::readthedown:
+    self-contained: yes
+    highlight: haddock
+    #css: styles.css
+    theme: flatly
+    number_sections: yes
+    thumbnails: no
+  html_notebook:
+    theme: cerulean 
+    number_sections: yes
+    toc: yes
+    toc_float:
+      collapsed: yes
+      smooth_scroll: yes
+---
+
+
+# Setting parameters
+
+```{r params}
+
+# Chunck options
+knitr::opts_chunk$set(echo = T,cache = F,cache.lazy = F,tidy = T,message = F,warning = F)
+options(future.globals.maxSize = 80000*1024^2)
+main.dir <- "/data/data_mbouamboua/projects/10x_htap_nucseq/"
+out.dir <- paste0(main.dir, "github/007_cellchat/")
+if(!dir.exists(out.dir)){dir.create(file.path(out.dir), recursive = T, showWarnings = F)}
+col.pal <- readRDS(paste0(main.dir, "github/002_data_objects/col.pal.rds"))
+colors <- c("#83BED9","#D35E63","#BD2D33","#82B577","#BEDCB0","#A0C893","#3D87AF","#E69498","#DED5E7","#3C1D62",
+            "#8A579C","#65307E","#C4AED0","#AB88B9","#633713","#FFBDF2","#A8AB8E",  "#858A61","#5F9E55","#37842E",
+            "#65A6C7", "#155F28","#A2D6EC","#D1B695","#EC85D8","#23120A","#217024","#7E1512","#353C20", "#8F6843",
+            "#F1B1B4","#B2916E","#D747BB","#B90497","#5A632A","#770262","#1F6A95","#115379","#DB7479")
+
+set.seed(4743)
+
+
+```
+
+# Packages and sources
+
+```{r Libs, message=F}
+
+library(Matrix)
+library(dplyr)
+library(Seurat)
+library(scater)
+library(ggplot2)
+library(patchwork)
+library(NMF)
+library(CellChat)
+library(ggalluvial)
+library(ComplexHeatmap)
+
+#source("/data/data_mbouamboua/apps/Rpkgs/Rpkgs.R")
+source("/data/data_mbouamboua/tools/utilities.R")
+source("/data/data_mbouamboua/tools/visualization.R")
+#source("/data/data_mbouamboua/tools/differential_expression.R")
+
+```
+
+
+
+
+## Load cellchat data
+
+```{r message=FALSE, warning=FALSE}
+
+cellchat.CTRL <- readRDS(paste0(main.dir, "github/002_data_objects/cellchat.CTRL.rds"))
+cellchat.PAH <- readRDS(paste0(main.dir, "github/002_data_objects/cellchat.PAH.rds"))
+# cellchat.CTRL@idents <- factor(cellchat.CTRL@idents, levels= c(Epithelial, Endothelial, Immune,Stroma))
+# cellchat.PAH@idents <- factor(cellchat.PAH@idents, levels= c(Epithelial, Endothelial, Immune,Stroma))
+# cellchat.CTRL <- updateCellChat(cellchat.CTRL)
+# cellchat.PAH <- updateCellChat(cellchat.PAH)
+object.list <- list(CTRL = cellchat.CTRL, PAH = cellchat.PAH)
+cellchat <- mergeCellChat(object.list, add.names = names(object.list))
+
+```
+
+
+
+```{r warnning = F, fig.width=3, fig.height=6}
+
+rankNet(cellchat,
+        mode = "comparison", 
+        stacked = T, 
+        do.stat = T, 
+        do.flip = T,
+        color.use = col.pal$group) +
+  theme(axis.text.x = element_text(size = 8, color = "black", hjust = 0.5),
+        axis.text.y = element_text(face = "bold", size = 8),
+        axis.title = element_text(size = 8),
+        legend.position = "none",
+        legend.key.size = unit(0.3, "cm"))
+
+ggsave(paste0(out.dir, "rankNet.pdf"), width = 3, height = 6, dpi = 100, useDingbats = F)
+
+```
+
+## Compare outgoing (or incoming) signaling associated with each cell population
+
+```{r fig.width=12, fig.height=10}
+
+i = 1
+# combining all the identified signaling pathways from different datasets 
+pathway.union <- union(object.list[[i]]@netP$pathways, object.list[[i+1]]@netP$pathways)
+ht1 = netAnalysis_signalingRole_heatmap(object.list[[i]], pattern = "outgoing", signaling = pathway.union, title = names(object.list)[i], width = 10, height = 14, color.heatmap = "OrRd", color.use = colors)
+ht2 = netAnalysis_signalingRole_heatmap(object.list[[i+1]], pattern = "outgoing", signaling = pathway.union, title = names(object.list)[i+1], width = 10, height = 14, color.heatmap = "OrRd",color.use = colors)
+draw(ht1 + ht2, ht_gap = unit(0.5, "cm"))
+pdf(paste0(out.dir, "outgoing.singaling.pattern.pdf"), width = 11, height = 11, useDingbats = F)
+draw(ht1 + ht2, ht_gap = unit(0.5, "cm"))
+dev.off()
+
+i = 1
+# combining all the identified signaling pathways from different datasets 
+pathway.union <- union(object.list[[i]]@netP$pathways, object.list[[i+1]]@netP$pathways)
+ht3 = netAnalysis_signalingRole_heatmap(object.list[[i]], pattern = "incoming", signaling = pathway.union, title = names(object.list)[i], width = 10, height = 14, color.heatmap = "OrRd",color.use = colors)
+ht4 = netAnalysis_signalingRole_heatmap(object.list[[i+1]], pattern = "incoming", signaling = pathway.union, title = names(object.list)[i+1], width = 10, height = 14, color.heatmap = "OrRd", color.use = colors)
+draw(ht3 + ht4, ht_gap = unit(0.5, "cm"))
+pdf(paste0(out.dir,"incoming.singaling.pattern.pdf"), width = 11, height = 11, useDingbats = F)
+draw(ht3 + ht4, ht_gap = unit(0.5, "cm"))
+dev.off()
+
+i = 1
+pathway.union <- union(object.list[[i]]@netP$pathways, object.list[[i+1]]@netP$pathways)
+ht1 = netAnalysis_signalingRole_heatmap(object.list[[i]], pattern = "all", signaling = pathway.union, title = names(object.list)[i], width = 10, height = 14, color.heatmap = "OrRd", color.use = colors)
+ht2 = netAnalysis_signalingRole_heatmap(object.list[[i+1]], pattern = "all", signaling = pathway.union, title = names(object.list)[i+1], width = 10, height = 14, color.heatmap = "OrRd", color.use = colors)
+draw(ht1 + ht2, ht_gap = unit(0.5, "cm"))
+pdf(paste0(out.dir, "overall.singaling.pattern.pdf"), width = 11, height = 11, useDingbats = F)
+draw(ht1 + ht2, ht_gap = unit(0.5, "cm"))
+dev.off()
+
+```
+
+
+# Differential number of interactions or interaction strength among different cell populations
+
+```{r fig.width=10, fig.height=6}
+
+sources.use <- c("AM1", "AM2","AM-prolif","DC1","DC2","Mono","Inter-Macro","CD4","CD8","T-prolif","NK","Mast","Plasma","pDC","B","Megak")
+targets.use <- c("Lymph","aCap","gCap","Art","V-Pulm","V-Sys")
+# Do heatmap based on a merged object
+gg1 <- netVisual_heatmap(cellchat, color.use = col.pal$celltype)
+gg2 <- netVisual_heatmap(cellchat, color.use = col.pal$celltype, measure = "weight")
+p <- gg1 + gg2
+
+#pdf(paste0(out.dir, "/04_data_objects/cellchat/netVisual_interaction_heatmap.pdf"), width = 10, height = 6, useDingbats = F)
+print(p)
+#dev.off()
+
+```
+
+
+
+# LR pairs
+
+```{r fig.width=10, fig.height=5}
+
+invisible(gc())
+dir <- paste0(out.dir, "LR.pairs/")
+if(!dir.exists(dir)){dir.create(file.path(dir), recursive = T, showWarnings = F)}
+
+joined <- data.frame()
+celltype.to.test <- as.vector(unique(cellchat@idents[[1]]))
+#celltype.to.test <- celltype.to.test[!celltype.to.test %in% c("PNEC","AM-prolif","T-prolif")]
+
+
+for(i in 1:length(celltype.to.test)){
+  print(celltype.to.test[i])
+  netVisual <- netVisual_bubble(cellchat,
+                                sources.use = celltype.to.test[i],
+                                remove.isolate = T,
+                                targets.use = c(celltype.to.test),
+                                comparison = c(1, 2),
+                                angle.x = 45,
+                                color.heatmap = "Spectral",
+                                color.text = col.pal$group,
+                                title.name = paste("LR pairs -", celltype.to.test[i]),
+                                return.data = F
+  ) +
+    theme(text = element_text(size = 8),
+          legend.key.height = unit(0.2, 'cm'),
+          legend.key.width = unit(0.2, 'cm')) +
+    guides(colour = guide_colorbar(frame.colour = "black", ticks.colour = "black")) +
+    geom_point(shape = 21, colour="black", stroke=0.5) 
+  
+  pdf(paste(dir, celltype.to.test[i], "_LR_pairs.pdf", sep = ""), width = 10, height = 5, useDingbats = F)
+  print(netVisual)
+  dev.off()
+  netVisual <- netVisual$data
+  rownames(netVisual) <- c()
+  joined <- rbind(joined, netVisual)
+}
+
+write.table(joined, file = paste(dir, "LR.pairs.tsv", sep = "/"), sep = "\t", quote = F, row.names = F, col.names = T)
+
+```
+
+
+
+# Contribution of each L-R pairs
+
+```{r fig.width=4.5, fig.height=3}
+
+dir <- paste0(out.dir, "LR.pair_contributions/")
+if(!dir.exists(dir)){dir.create(file.path(dir), recursive = T, showWarnings = F)}
+LR.pairs <- read.delim(paste0(out.dir, "LR.pairs/LR.pairs.tsv"))
+pathway.name <- unique(LR.pairs$pathway_name)
+ranknet <- rankNet(cellchat, mode = "comparison")
+ranknet <- ranknet$data
+only.CTRL.pathway.name <- subset(ranknet, contribution == 0 & group == "PAH")
+only.CTRL.pathway.name <- as.vector(only.CTRL.pathway.name$name)
+only.PAH.pathway.name <- subset(ranknet, contribution == 0 & group == "CTRL" ) 
+only.PAH.pathway.name <- as.vector(only.PAH.pathway.name$name)
+pathway.name <- unique(LR.pairs$pathway_name)
+pathway.name <-  pathway.name[!pathway.name %in% c(only.CTRL.pathway.name, only.PAH.pathway.name)]
+
+
+for (pathway in 1:length(pathway.name)) {
+  pathways.show <- pathway.name[pathway]
+  for (i in 1:length(object.list)) {
+    netAnalysis_contribution(object.list[[i]],
+                             signaling = pathways.show,
+                             title = "") +
+      theme(
+            plot.title = element_text(size = 10),
+            axis.title = element_text(size = 10),
+            axis.text.y = element_text(size = 10))
+    
+    ggsave(paste(dir, paste0(pathways.show,"_",names(object.list)[i]),".pdf"), 
+        width = 3.5, height = 3, useDingbats = F)
+  }
+}
+
+
+# only.PAH.pathway.name
+for (pathway in 1:length(only.PAH.pathway.name)) {
+  pathways.show <- only.PAH.pathway.name[pathway]
+    netAnalysis_contribution(object = cellchat.PAH,
+                             signaling = pathways.show,
+                             title = "") +
+      theme(plot.title = element_text(size = 10),
+            axis.title = element_text(size = 10),
+            axis.text.y = element_text(size = 10))
+    
+    ggsave(paste0(dir, pathways.show,"_PAH.pdf"), 
+        width = 3.5, height = 3, useDingbats = F)
+}
+
+
+# only.CTRL.pathway.name
+for (pathway in 1:length(only.CTRL.pathway.name)) {
+  pathways.show <- only.CTRL.pathway.name[pathway]
+    netAnalysis_contribution(object = cellchat.CTRL,
+                             signaling = pathways.show,
+                             title = "") +
+      theme(plot.title = element_text(size = 10),
+            axis.title = element_text(size = 10),
+            axis.text.y = element_text(size = 10))
+    
+    ggsave(paste0(dir, pathways.show,"_CTRL.pdf"), 
+        width = 3.5, height = 3, useDingbats = F)
+}
+
+
+```
+
+
+
+
+# Subset BMP+TGFb LR pairs
+
+```{r }
+
+dir <- paste0(out.dir, "BMP_TGFb_LR.pairs/")
+if(!dir.exists(dir)){dir.create(file.path(dir), recursive = T, showWarnings = F)}
+
+# BMP
+LR.pairs <- read.delim(paste0(out.dir, "LR.pairs/LR.pairs.tsv"))
+#pathway.name <- unique(LR.pairs$pathway_name)
+pathways.show <- c("BMP")
+
+pairLR.use <- extractEnrichedLR(cellchat, signaling = pathways.show, geneLR.return = F, enriched.only = T)
+LR.pairs.sub <- subset(LR.pairs, pathway_name == paste(pathways.show))
+sources.use <- unique(LR.pairs.sub$source)
+targets.use <- unique(LR.pairs.sub$target)
+
+for(i in 1:length(sources.use)){
+
+  plot <- netVisual_bubble(cellchat,
+                           pairLR.use = pairLR.use,
+                           sources.use = sources.use[i],
+                           targets.use = targets.use,
+                           remove.isolate = T,
+                           comparison = c(1, 2),
+                           angle.x = 45,
+                           color.heatmap = "Spectral",
+                           color.text = col.pal$group,
+                           title.name = paste(pathways.show, " LR pairs - ", sources.use[i]),
+                           return.data = F
+  ) +
+    theme(text = element_text(size = 8),
+          legend.key.height = unit(0.2, 'cm'),
+          legend.key.width = unit(0.2, 'cm')) +
+    guides(colour = guide_colorbar(frame.colour = "black", ticks.colour = "black")) +
+    geom_point(shape = 21, colour="black", stroke=0.5)
+  
+  pdf(paste(dir, sources.use[i], "_BMP_LR_pairs.pdf", sep = ""), width = 7, height = 3, useDingbats = F)
+  print(plot)
+  dev.off()
+}
+
+
+
+# TGFb
+LR.pairs <- read.delim(paste0(out.dir, "LR.pairs/LR.pairs.tsv"))
+#pathway.name <- unique(LR.pairs$pathway_name)
+pathways.show <- c("TGFb")
+
+pairLR.use <- extractEnrichedLR(cellchat, signaling = pathways.show, geneLR.return = F, enriched.only = T)
+LR.pairs.sub <- subset(LR.pairs, pathway_name == paste(pathways.show))
+sources.use <- unique(LR.pairs.sub$source)
+targets.use <- unique(LR.pairs.sub$target)
+
+for(i in 1:length(sources.use)){
+
+  plot <- netVisual_bubble(cellchat,
+                           pairLR.use = pairLR.use,
+                           sources.use = sources.use[i],
+                           targets.use = targets.use,
+                           remove.isolate = T,
+                           comparison = c(1, 2),
+                           angle.x = 45,
+                           color.heatmap = "Spectral",
+                           color.text = col.pal$group,
+                           title.name = paste(pathways.show, " LR pairs - ", sources.use[i]),
+                           return.data = F
+  ) +
+    theme(text = element_text(size = 8),
+          legend.key.height = unit(0.2, 'cm'),
+          legend.key.width = unit(0.2, 'cm')) +
+    guides(colour = guide_colorbar(frame.colour = "black", ticks.colour = "black")) +
+    geom_point(shape = 21, colour="black", stroke=0.5)
+  
+  pdf(paste(dir, sources.use[i], "_TGFb_LR_pairs.pdf", sep = ""), width = 7, height = 3, useDingbats = F)
+  print(plot)
+  dev.off()
+}
+
+
+
+```
+
+
+
+
+# Signaling network
+
+```{r}
+
+dir <- paste0(out.dir, "signaling_network/")
+if(!dir.exists(dir)){dir.create(file.path(dir), recursive = T, showWarnings = F)}
+
+LR.pairs <- read.delim(paste0(out.dir, "LR.pairs/LR.pairs.tsv"))
+ranknet <- rankNet(cellchat, mode = "comparison")
+ranknet <- ranknet$data
+only.CTRL.pathway.name <- subset(ranknet, contribution == 0 & group == "PAH")
+only.CTRL.pathway.name <- as.vector(only.CTRL.pathway.name$name)
+only.PAH.pathway.name <- subset(ranknet, contribution == 0 & group == "CTRL" ) 
+only.PAH.pathway.name <- as.vector(only.PAH.pathway.name$name)
+pathway.name <- unique(LR.pairs$pathway_name)
+pathway.name <-  pathway.name[!pathway.name %in% c(only.CTRL.pathway.name, only.PAH.pathway.name)]
+
+for (pathway in 1:length(pathway.name)) {
+  
+  pathways.show <- pathway.name[pathway]
+  weight.max <- getMaxWeight(object.list, slot.name = c("netP"), attribute = pathways.show)
+  
+  for (i in 1:length(object.list)) {
+    pdf(paste(dir, paste0(pathways.show,"_",names(object.list)[i]),".pdf", sep = ""), width = 7, height = 7, useDingbats = F)
+    netVisual_aggregate(object.list[[i]], 
+                        signaling = pathways.show, 
+                        remove.isolate = F,
+                        layout = "chord", 
+                        #sources.use = sources.use, 
+                        #targets.use = targets.use,
+                        color.use = col.pal$celltype,
+                        edge.weight.max = weight.max[1], 
+                        edge.width.max = 10, 
+                        signaling.name = paste(pathways.show, names(object.list)[i]))
+    dev.off()
+  }
+}
+
+
+# only.PAH.pathway.name
+
+for (pathway in 1:length(only.PAH.pathway.name)) {
+  
+  pathways.show <- only.PAH.pathway.name[pathway]
+
+  pdf(paste0(dir, pathways.show,"_PAH.pdf"), width = 7, height = 7, useDingbats = F)
+
+  netVisual_aggregate(cellchat.PAH, 
+                      signaling = pathways.show, 
+                      remove.isolate = F,
+                      layout = "chord", 
+                      color.use = col.pal$celltype,
+                      edge.width.max = 10, 
+                      signaling.name = paste(pathways.show, " PAH")
+  )
+  dev.off()
+}
+
+
+# only.CTRL.pathway.name
+
+for (pathway in 1:length(only.CTRL.pathway.name)) {
+  
+  pathways.show <- only.CTRL.pathway.name[pathway]
+
+  pdf(paste0(dir, pathways.show,"_CTRL.pdf"), width = 7, height = 7, useDingbats = F)
+  
+  netVisual_aggregate(cellchat.CTRL, 
+                      signaling = pathways.show, 
+                      remove.isolate = F,
+                      layout = "chord", 
+                      color.use = col.pal$celltype,
+                      edge.width.max = 10, 
+                      signaling.name = paste(pathways.show, " CTRL")
+  )
+  dev.off()
+}
+
+```
+
+
+
+# Signalig role
+
+```{r}
+
+# Signaling role analysis on the aggregated cell-cell communication network from all signaling pathways
+cellchat.CTRL <- netAnalysis_computeCentrality(cellchat.CTRL)
+gg1 <- netAnalysis_signalingRole_scatter(cellchat.CTRL)
+# Signaling role analysis on the cell-cell communication networks of interest
+gg2 <- netAnalysis_signalingRole_scatter(cellchat.CTRL, signaling = c("BMP"), color.use = col.pal$celltype)
+gg1 + gg2
+
+```
+
+
+# Pathway signaling roles
+
+```{r fig.width=8, fig.height=4}
+
+#cellchat.CTRL <- netAnalysis_computeCentrality(cellchat.CTRL, slot.name = "netP")
+#pathways.show <- c("ACTIVIN","BMP", "CCL","CXCL","EDN","GDF", "ncWNT","NRG", "PERIOSTIN","SEMA3", "TRAIL", "VGF", "VISFATIN", "WNT")
+
+invisible(gc())
+dir <- paste(out.dir, "pathway_signaling_roles/CTRL/", sep = "/")
+if(!dir.exists(dir)){dir.create(file.path(dir), recursive = TRUE, showWarnings = FALSE)}
+
+pathways.show <- cellchat.CTRL@netP$pathways
+
+for(i in 1:length(pathways.show)){
+  print(pathways.show[i])
+  pdf(paste(dir,  pathways.show[i], ".pdf", sep = ""), width = 8, height = 2.5, useDingbats = FALSE)
+  netAnalysis_signalingRole_network(cellchat.CTRL, signaling = pathways.show[i],  width = 12,
+                                    height = 2.5, font.size = 7, color.use = colors) 
+  dev.off()
+  }
+
+#cellchat.PAH <- netAnalysis_computeCentrality(cellchat.PAH, slot.name = "netP")
+
+invisible(gc())
+dir <- paste(main.dir, "pathway_signaling_roles/PAH/", sep = "/")
+if(!dir.exists(dir)){dir.create(file.path(dir), recursive = TRUE, showWarnings = FALSE)}
+
+pathways.show <- cellchat.PAH@netP$pathways
+
+for(i in 1:length(pathways.show)){
+  print(pathways.show[i])
+  pdf(paste(dir,  pathways.show[i], ".pdf", sep = ""), width = 8, height = 2.5, useDingbats = FALSE)
+  netAnalysis_signalingRole_network(cellchat.PAH, signaling = pathways.show[i],  width = 12, 
+                                    height = 2.5, font.size = 7, color.use = colors) 
+  dev.off()
+}
+
+```
+
+
+
+## Celltype signaling
+
+```{r fig.width=10, fig.height=10}
+
+## CTRL celltype signaling
+groupize <- as.numeric(table(cellchat.CTRL@idents)) # number of cells in each cell group
+mat <- cellchat.CTRL@net$weight
+#par(mfrow = c(3,4), xpd=TRUE)
+for (i in 1:nrow(mat)) {
+  mat2 <- matrix(0, nrow = nrow(mat), ncol = ncol(mat), dimnames = dimnames(mat))
+  mat2[i, ] <- mat[i, ]
+  p <- netVisual_circle(mat2, vertex.weight = groupize, weight.scale = T, edge.weight.max = max(mat), title.name = rownames(mat)[i], color.use = colors, vertex.label.cex = 0.7)
+  pdf(paste(out.dir, "celltype_signaling_roles/CTRL/", rownames(mat)[i], "_CTRL.pdf", sep = ""), width = 8, height = 8, useDingbats = FALSE)
+  print(p)
+  dev.off()
+}
+
+## PAH celltype signaling
+groupize <- as.numeric(table(cellchat.PAH@idents)) # number of cells in each cell group
+mat <- cellchat.PAH@net$weight
+#par(mfrow = c(3,4), xpd=TRUE)
+for (i in 1:nrow(mat)) {
+  mat2 <- matrix(0, nrow = nrow(mat), ncol = ncol(mat), dimnames = dimnames(mat))
+  mat2[i, ] <- mat[i, ]
+  p <- netVisual_circle(mat2, vertex.weight = groupize, weight.scale = T, edge.weight.max = max(mat), title.name = rownames(mat)[i], color.use = colors, vertex.label.cex = 0.7)
+  pdf(paste(out.dir, "celltype_signaling_roles/PAH/", rownames(mat)[i], "_PAH.pdf", sep = ""), width = 8, height = 8, useDingbats = FALSE)
+  print(p)
+  dev.off()
+}
+
+```
+
+
+
+
+
+
+
+# plotGeneExpression
+
+```{r warning=F, message=F, fig.width=4, fig.height=4}
+
+dir <- paste0(out.dir, "pathway_gene_expression/")
+if(!dir.exists(dir)){dir.create(file.path(dir), recursive = T, showWarnings = F)}
+
+LR.pairs <- read.delim(paste0(out.dir, "LR.pairs/LR.pairs.tsv"))
+#pairLR.use <- extractEnrichedLR(cellchat.CTRL, signaling = pathways.show, geneLR.return = F)
+pathway.name <- unique(LR.pairs$pathway_name)
+#LR.pairs.sub <- subset(LR.pairs, pathway_name == paste(pathways.show))
+# ligands <- unique(LR.pairs.sub$ligand)
+# ligands <- unique(unlist(strsplit(x = ligands, "\\_")))
+# receptors <- unique(LR.pairs.sub$receptor)
+# receptors <- unique(unlist(strsplit(x = receptors, "\\_")))
+DefaultAssay(htap) <- "RNA"
+
+for (pathway in 1:length(pathway.name)) {
+  
+  pathways.show <- pathway.name[pathway]
+  LR.pairs.sub <- subset(LR.pairs, pathway_name == paste(pathways.show))
+  ligand <- unique(LR.pairs.sub$ligand)
+  ligand <- unique(unlist(strsplit(x = ligand, "\\_")))
+  receptor <- unique(LR.pairs.sub$receptor)
+  receptor <- unique(unlist(strsplit(x = receptor, "\\_")))
+  genes <- unique(c(ligand, receptor))
+  genes <- rownames(htap[genes,])
+  genes <- toupper(genes)
+  
+  StackedVlnPlot(obj = htap, angle.x = 45,
+                 features = genes,
+                 group.by = "celltype_order", 
+                 split.by = "group", 
+                 color.text.x = col.pal$celltype,
+                 color.use = col.pal$group)
+  
+   ggsave(paste0(dir, pathways.show,"_gene_expression.pdf"), 
+        width = 10, height = 4, useDingbats = F)
+
+}
+
+
+```
+
+
+
+
+
+
+# Immune vs endothelial cells
+
+## LR pairs 
+
+```{r fig.width=10, fig.height=5}
+
+invisible(gc())
+dir <- paste0(out.dir, "Imm.vs.Endo/LR.pairs/")
+if(!dir.exists(dir)){dir.create(file.path(dir), recursive = T, showWarnings = F)}
+
+joined <- data.frame()
+#sources.use <- c("AM1", "AM2","Mono","Inter-Macro")
+sources.use <- c("AM1", "AM2","AM-prolif","DC1","DC2","Mono","Inter-Macro","CD4","CD8","T-prolif","NK","Mast","Plasma","pDC","B","Megak")
+targets.use <- c("Lymph","aCap","gCap","Art","V-Pulm","V-Sys")
+celltype.to.test <- as.vector(unique(cellchat@idents[[1]]))
+celltype.to.test <- celltype.to.test[!celltype.to.test %in% c("PNEC","AM-prolif","T-prolif","B")]
+sources.use <- celltype.to.test[celltype.to.test %in% c(sources.use)]
+
+for(i in 1:length(sources.use)){
+  netVisual <- netVisual_bubble(cellchat,
+                                sources.use = sources.use[i],
+                                remove.isolate = T,
+                                targets.use = targets.use,
+                                comparison = c(1, 2),
+                                angle.x = 45,
+                                color.heatmap = "Spectral",
+                                color.text = col.pal$group,
+                                title.name = paste("LR pairs -", sources.use[i]),
+                                return.data = F
+  ) +
+    theme(text = element_text(size = 6),
+          legend.key.height = unit(0.2, 'cm'),
+          legend.key.width = unit(0.2, 'cm')) +
+    guides(colour = guide_colorbar(frame.colour = "black", ticks.colour = "black")) +
+    geom_point(shape = 21, colour="black", stroke=0.5) 
+  
+  pdf(paste(dir, sources.use[i], "_LR_pairs.pdf", sep = ""), width = 4, height = 2.5, useDingbats = F)
+  print(netVisual)
+  dev.off()
+  netVisual <- netVisual$data
+  rownames(netVisual) <- c()
+  joined <- rbind(joined, netVisual)
+}
+
+write.table(joined, file = paste(dir, "LR.pairs.tsv", sep = "/"), sep = "\t", quote = F, row.names = F, col.names = T)
+
+```
+
+## Subset LR pairs
+
+```{r }
+
+dir <- paste(main.dir, "Imm.vs.Endo/", sep = "/")
+LR.pairs <- read.delim(paste0(out.dir, "Imm.vs.Endo/LR.pairs/LR.pairs.tsv"))
+pathway.name <- unique(LR.pairs$pathway_name)
+
+pathways.show <- "CCL"
+pairLR.use <- extractEnrichedLR(cellchat, signaling = pathways.show, geneLR.return = F, enriched.only = T)
+LR.pairs <- subset(LR.pairs, pathway_name == paste(pathways.show))
+sources.use <- unique(LR.pairs$source)
+targets.use <- unique(LR.pairs$target)
+
+for(i in 1:length(sources.use)){
+  netAnalysis_contribution(cellchat.CTRL, signaling = "BMP")
+
+  plot <- netVisual_bubble(cellchat,
+                           pairLR.use = pairLR.use,
+                           sources.use = sources.use[i],
+                           targets.use = targets.use,
+                           remove.isolate = T,
+                           comparison = c(1, 2),
+                           angle.x = 45,
+                           color.heatmap = "Spectral",
+                           color.text = col.pal$group,
+                           title.name = paste(pathways.show, " LR pairs - ", sources.use[i]),
+                           return.data = F
+  ) +
+    theme(text = element_text(size = 8),
+          legend.key.height = unit(0.2, 'cm'),
+          legend.key.width = unit(0.2, 'cm')) +
+    guides(colour = guide_colorbar(frame.colour = "black", ticks.colour = "black")) +
+    geom_point(shape = 21, colour="black", stroke=0.5)
+  pdf(paste(dir, sources.use[i], "_LR_pairs.pdf", sep = ""), width = 7, height = 3, useDingbats = F)
+  print(plot)
+  dev.off()
+}
+
+
+```
+
+
+# plotGeneExpression
+
+```{r fig.width=4, fig.height=4}
+
+dir <- paste0(out.dir, "Imm.vs.Endo/pathway_gene_expression/")
+if(!dir.exists(dir)){dir.create(file.path(dir), recursive = T, showWarnings = F)}
+
+LR.pairs <- read.delim(paste0(out.dir, "Imm.vs.Endo/LR.pairs/LR.pairs.tsv"))
+#pairLR.use <- extractEnrichedLR(cellchat.CTRL, signaling = pathways.show, geneLR.return = F)
+pathway.name <- unique(LR.pairs$pathway_name)
+LR.pairs.sub <- subset(LR.pairs, pathway_name == paste(pathways.show))
+# ligands <- unique(LR.pairs.sub$ligand)
+# ligands <- unique(unlist(strsplit(x = ligands, "\\_")))
+# receptors <- unique(LR.pairs.sub$receptor)
+# receptors <- unique(unlist(strsplit(x = receptors, "\\_")))
+
+for (pathway in 1:length(pathway.name)) {
+  pathways.show <- pathway.name[pathway]
+  LR.pairs.sub <- subset(LR.pairs, pathway_name == paste(pathways.show))
+  receptors <- unique(LR.pairs.sub$receptor)
+  receptors <- unique(unlist(strsplit(x = receptors, "\\_")))
+  StackedVlnPlot(obj = sobj, angle.x = 45,
+                 features = receptors,
+                 group.by = "celltype_order", 
+                 split.by = "group", 
+                 color.use = col.pal$group)
+  
+   ggsave(paste0(dir, pathways.show,"_gene_expression.pdf"), 
+        width = 4, height = 4, useDingbats = F)
+
+}
+
+
+
+```
+
+
+
+# Signaling network
+
+```{r}
+
+dir <- paste0(out.dir, "Imm.vs.Endo/signaling_network/")
+if(!dir.exists(dir)){dir.create(file.path(dir), recursive = T, showWarnings = F)}
+LR.pairs <- read.delim(paste0(out.dir, "Imm.vs.Endo/LR.pairs/LR.pairs.tsv"))
+pathway.name <- unique(LR.pairs$pathway_name)
+ranknet <- rankNet(cellchat, mode = "comparison")
+ranknet <- ranknet$data
+only.CTRL.pathway.name <- subset(ranknet, contribution == 0 & group == "PAH")
+only.CTRL.pathway.name <- as.vector(only.CTRL.pathway.name$name)
+only.PAH.pathway.name <- subset(ranknet, contribution == 0 & group == "CTRL" ) 
+only.PAH.pathway.name <- as.vector(only.PAH.pathway.name$name)
+pathway.name <- unique(LR.pairs$pathway_name)
+pathway.name <-  pathway.name[!pathway.name %in% c(only.CTRL.pathway.name, only.PAH.pathway.name)]
+
+
+for (pathway in 1:length(pathway.name)) {
+  pathways.show <- pathway.name[pathway]
+  weight.max <- getMaxWeight(object.list, slot.name = c("netP"), attribute = pathways.show)
+  for (i in 1:length(object.list)) {
+    pdf(paste(dir, paste0(pathways.show,"_",names(object.list)[i]),".pdf"), 
+        width = 7, height = 7, useDingbats = F)
+    
+    netVisual_aggregate(object.list[[i]], 
+                        signaling = pathways.show, 
+                        layout = "chord", 
+                        sources.use = sources.use, 
+                        targets.use = targets.use,
+                        color.use = col.pal$celltype,
+                        edge.weight.max = weight.max[1], 
+                        edge.width.max = 6, 
+                        signaling.name = paste(pathways.show, names(object.list)[i]))
+    dev.off()
+    
+  }
+}
+
+
+# only.PAH.pathway.name
+
+for (pathway in 1:length(only.PAH.pathway.name)) {
+  pathways.show <- only.PAH.pathway.name[pathway]
+  pdf(paste0(dir, pathways.show,"_PAH.pdf"), width = 7, height = 7, useDingbats = F)
+  netVisual_aggregate(cellchat.PAH, 
+                      signaling = pathways.show, 
+                      remove.isolate = F,
+                      layout = "chord", 
+                      color.use = col.pal$celltype,
+                      edge.width.max = 10, 
+                      signaling.name = paste(pathways.show, " PAH")
+  )
+  dev.off()
+}
+
+
+# only.CTRL.pathway.name
+
+for (pathway in 1:length(only.CTRL.pathway.name)) {
+  pathways.show <- only.CTRL.pathway.name[pathway]
+  pdf(paste0(dir, pathways.show,"_CTRL.pdf"), width = 7, height = 7, useDingbats = F)
+  netVisual_aggregate(cellchat.CTRL, 
+                      signaling = pathways.show, 
+                      remove.isolate = F,
+                      layout = "chord", 
+                      color.use = col.pal$celltype,
+                      edge.width.max = 10, 
+                      signaling.name = paste(pathways.show, " CTRL")
+  )
+  dev.off()
+}
+
+
+```
+
+
+# Contribution of each L-R pairs
+
+```{r fig.width=4.5, fig.height=3}
+
+dir <- paste0(out.dir, "Imm.vs.Endo/LR.pair_contributions/")
+if(!dir.exists(dir)){dir.create(file.path(dir), recursive = T, showWarnings = F)}
+LR.pairs <- read.delim(paste0(out.dir, "Imm.vs.Endo/LR.pairs/LR.pairs.tsv"))
+pathway.name <- unique(LR.pairs$pathway_name)
+ranknet <- rankNet(cellchat, mode = "comparison")
+ranknet <- ranknet$data
+only.CTRL.pathway.name <- subset(ranknet, contribution == 0 & group == "PAH")
+only.CTRL.pathway.name <- as.vector(only.CTRL.pathway.name$name)
+only.PAH.pathway.name <- subset(ranknet, contribution == 0 & group == "CTRL" ) 
+only.PAH.pathway.name <- as.vector(only.PAH.pathway.name$name)
+pathway.name <- unique(LR.pairs$pathway_name)
+pathway.name <-  pathway.name[!pathway.name %in% c(only.CTRL.pathway.name, only.PAH.pathway.name)]
+
+for (pathway in 1:length(pathway.name)) {
+  pathways.show <- pathway.name[pathway]
+  for (i in 1:length(object.list)) {
+    netAnalysis_contribution(object.list[[i]],
+                             signaling = pathways.show,
+                             title = "") +
+      theme(
+            plot.title = element_text(size = 10),
+            axis.title = element_text(size = 10),
+            axis.text.y = element_text(size = 10))
+    
+    ggsave(paste(dir, paste0(pathways.show,"_",names(object.list)[i]),".pdf"), 
+        width = 3.5, height = 3, useDingbats = F)
+  }
+}
+
+
+# only.PAH.pathway.name
+for (pathway in 1:length(only.PAH.pathway.name)) {
+  pathways.show <- only.PAH.pathway.name[pathway]
+    netAnalysis_contribution(object = cellchat.PAH,
+                             signaling = pathways.show,
+                             title = "") +
+      theme(plot.title = element_text(size = 10),
+            axis.title = element_text(size = 10),
+            axis.text.y = element_text(size = 10))
+    
+    ggsave(paste0(dir, pathways.show,"_PAH.pdf"), 
+        width = 3.5, height = 3, useDingbats = F)
+}
+
+
+# only.CTRL.pathway.name
+for (pathway in 1:length(only.CTRL.pathway.name)) {
+  pathways.show <- only.CTRL.pathway.name[pathway]
+    netAnalysis_contribution(object = cellchat.CTRL,
+                             signaling = pathways.show,
+                             title = "") +
+      theme(plot.title = element_text(size = 10),
+            axis.title = element_text(size = 10),
+            axis.text.y = element_text(size = 10))
+    
+    ggsave(paste0(dir, pathways.show,"_CTRL.pdf"), 
+        width = 3.5, height = 3, useDingbats = F)
+}
+
+
+```
+
+
+
+
+# Immune vs Endothelial+Stromal
+
+## LR pairs 
+
+```{r fig.width=10, fig.height=5}
+
+invisible(gc())
+dir <- paste0(out.dir, "Cellchat_Immune_vs_Endo_Stroma/LR.pairs/")
+if(!dir.exists(dir)){dir.create(file.path(dir), recursive = T, showWarnings = F)}
+
+joined <- data.frame()
+#sources.use <- c("AM1", "AM2","Mono","Inter-Macro")
+sources.use <- c("AM1", "AM2","AM-prolif","DC1","DC2","Mono","Inter-Macro","CD4","CD8","T-prolif","NK","Mast","Plasma","pDC","B","Megak")
+targets.use <- c("Lymph","aCap","gCap","Art","V-Pulm","V-Sys","Peri", "ASMC","VSMC","AdvFibro","AlvFibro", "MyoFibro")
+celltype.to.test <- as.vector(unique(cellchat@idents[[1]]))
+#celltype.to.test <- celltype.to.test[!celltype.to.test %in% c("PNEC","AM-prolif","T-prolif","B")]
+sources.use <- celltype.to.test[celltype.to.test %in% c(sources.use)]
+
+for(i in 1:length(sources.use)){
+  netVisual <- netVisual_bubble(cellchat,
+                                sources.use = sources.use[i],
+                                remove.isolate = T,
+                                targets.use = targets.use,
+                                comparison = c(1, 2),
+                                angle.x = 45,
+                                color.heatmap = "Spectral",
+                                color.text = col.pal$group,
+                                title.name = paste("LR pairs -", sources.use[i]),
+                                return.data = F
+  ) +
+    theme(text = element_text(size = 10),
+          legend.key.height = unit(0.2, 'cm'),
+          legend.key.width = unit(0.2, 'cm')) +
+    guides(colour = guide_colorbar(frame.colour = "black", ticks.colour = "black")) +
+    geom_point(shape = 21, colour="black", stroke=0.5) 
+  
+  pdf(paste(dir, sources.use[i], "_LR_pairs.pdf", sep = ""), width = 8, height = 4, useDingbats = F)
+  print(netVisual)
+  dev.off()
+  netVisual <- netVisual$data
+  rownames(netVisual) <- c()
+  joined <- rbind(joined, netVisual)
+}
+
+write.table(joined, file = paste(dir, "LR.pairs.tsv", sep = "/"), sep = "\t", quote = F, row.names = F, col.names = T)
+
+```
+
+
+
+## Subset LR pairs
+
+```{r }
+
+dir <- paste0(out.dir, "Cellchat_Immune_vs_Endo_Stroma/")
+LR.pairs <- read.delim(paste0(out.dir, "Cellchat_Immune_vs_Endo_Stroma/LR.pairs/LR.pairs.tsv"))
+pathway.name <- unique(LR.pairs$pathway_name)
+
+pathways.show <- "BMP"
+pairLR.use <- extractEnrichedLR(cellchat, signaling = pathways.show, geneLR.return = F, enriched.only = T)
+LR.pairs <- subset(LR.pairs, pathway_name == paste(pathways.show))
+sources.use <- unique(LR.pairs$source)
+targets.use <- unique(LR.pairs$target)
+
+for(i in 1:length(sources.use)){
+  netAnalysis_contribution(cellchat.CTRL, signaling = "BMP")
+
+  plot <- netVisual_bubble(cellchat,
+                           pairLR.use = pairLR.use,
+                           sources.use = sources.use[i],
+                           targets.use = targets.use,
+                           remove.isolate = T,
+                           comparison = c(1, 2),
+                           angle.x = 45,
+                           color.heatmap = "Spectral",
+                           color.text = col.pal$group,
+                           title.name = paste(pathways.show, " LR pairs - ", sources.use[i]),
+                           return.data = F
+  ) +
+    theme(text = element_text(size = 8),
+          legend.key.height = unit(0.2, 'cm'),
+          legend.key.width = unit(0.2, 'cm')) +
+    guides(colour = guide_colorbar(frame.colour = "black", ticks.colour = "black")) +
+    geom_point(shape = 21, colour="black", stroke=0.5)
+  pdf(paste(dir, sources.use[i], "_LR_pairs.pdf", sep = ""), width = 7, height = 3, useDingbats = F)
+  print(plot)
+  dev.off()
+}
+
+
+```
+
+
+## plotGeneExpression
+
+```{r fig.width=7, fig.height=4, warning=F, message=F}
+
+dir <- paste0(out.dir, "Cellchat_Immune_vs_Endo_Stroma/pathway_gene_expression/")
+if(!dir.exists(dir)){dir.create(file.path(dir), recursive = T, showWarnings = F)}
+
+Idents(htap) <- "population"
+sub <- subset(htap, idents = c("Immune", "Endothelial", "Stroma"))
+LR.pairs <- read.delim(paste0(out.dir, "Cellchat_Immune_vs_Endo_Stroma/LR.pairs/LR.pairs.tsv"))
+#pairLR.use <- extractEnrichedLR(cellchat.CTRL, signaling = pathways.show, geneLR.return = F)
+pathway.name <- unique(LR.pairs$pathway_name)
+
+for (pathway in 1:length(pathway.name)) {
+  pathways.show <- pathway.name[pathway]
+  LR.pairs.sub <- subset(LR.pairs, pathway_name == paste(pathways.show))
+  ligand <- unique(LR.pairs.sub$ligand)
+  ligand <- unique(unlist(strsplit(x = ligand, "\\_")))
+  receptor <- unique(LR.pairs.sub$receptor)
+  receptor <- unique(unlist(strsplit(x = receptor, "\\_")))
+  genes <- unique(c(ligand, receptor))
+  genes <- toupper(genes)
+  genes <- rownames(sub[genes,])
+
+  StackedVlnPlot(obj = sub, 
+               angle.x = 45,
+               features = genes,
+               group.by = "celltype_order", 
+               split.by = "group", 
+               base.size = 10,
+               color.text.x = c(col.pal$endo_colors, col.pal$immune_colors, col.pal$stroma_colors),
+               color.use = col.pal$group)
+  
+   ggsave(paste0(dir, pathways.show,"_gene_expression.pdf"), 
+        width = 7, height = 4, useDingbats = F)
+
+}
+
+
+```
+
+
+
+## Signaling network
+
+
+
+```{r}
+
+dir <- paste0(out.dir, "Cellchat_Immune_vs_Endo_Stroma/signaling_network/")
+if(!dir.exists(dir)){dir.create(file.path(dir), recursive = T, showWarnings = F)}
+LR.pairs <- read.delim(paste0(out.dir, "Cellchat_Immune_vs_Endo_Stroma/LR.pairs/LR.pairs.tsv"))
+pathway.name <- unique(LR.pairs$pathway_name)
+ranknet <- rankNet(cellchat, mode = "comparison")
+ranknet <- ranknet$data
+only.CTRL.pathway.name <- subset(ranknet, contribution == 0 & group == "PAH")
+only.CTRL.pathway.name <- as.vector(only.CTRL.pathway.name$name)
+only.PAH.pathway.name <- subset(ranknet, contribution == 0 & group == "CTRL" ) 
+only.PAH.pathway.name <- as.vector(only.PAH.pathway.name$name)
+pathway.name <- unique(LR.pairs$pathway_name)
+pathway.name <-  pathway.name[!pathway.name %in% c(only.CTRL.pathway.name, only.PAH.pathway.name)]
+
+
+for (pathway in 1:length(pathway.name)) {
+  pathways.show <- pathway.name[pathway]
+  weight.max <- getMaxWeight(object.list, slot.name = c("netP"), attribute = pathways.show)
+  for (i in 1:length(object.list)) {
+    pdf(paste(dir, paste0(pathways.show,"_",names(object.list)[i]),".pdf"), 
+        width = 7, height = 7, useDingbats = F)
+    
+    netVisual_aggregate(object.list[[i]], 
+                        signaling = pathways.show, 
+                        layout = "chord", 
+                        remove.isolate = F,
+                        sources.use = sources.use, 
+                        targets.use = targets.use,
+                        color.use = col.pal$celltype,
+                        edge.weight.max = weight.max[1], 
+                        edge.width.max = 6, 
+                        signaling.name = paste(pathways.show, names(object.list)[i]))
+    dev.off()
+    
+  }
+}
+
+
+# only.PAH.pathway.name
+
+for (pathway in 1:length(only.PAH.pathway.name)) {
+  pathways.show <- only.PAH.pathway.name[pathway]
+  pdf(paste0(dir, pathways.show,"_PAH.pdf"), width = 7, height = 7, useDingbats = F)
+  netVisual_aggregate(cellchat.PAH, 
+                      signaling = pathways.show, 
+                      remove.isolate = F,
+                      layout = "chord", 
+                      color.use = col.pal$celltype,
+                      edge.width.max = 10, 
+                      signaling.name = paste(pathways.show, " PAH")
+  )
+  dev.off()
+}
+
+
+# only.CTRL.pathway.name
+
+for (pathway in 1:length(only.CTRL.pathway.name)) {
+  pathways.show <- only.CTRL.pathway.name[pathway]
+  pdf(paste0(dir, pathways.show,"_CTRL.pdf"), width = 7, height = 7, useDingbats = F)
+  netVisual_aggregate(cellchat.CTRL, 
+                      signaling = pathways.show, 
+                      remove.isolate = F,
+                      layout = "chord", 
+                      color.use = col.pal$celltype,
+                      edge.width.max = 10, 
+                      signaling.name = paste(pathways.show, " CTRL")
+  )
+  dev.off()
+}
+
+
+```
+
+
+## Contribution of each L-R pairs
+
+```{r fig.width=4.5, fig.height=3}
+
+dir <- paste0(out.dir, "Cellchat_Immune_vs_Endo_Stroma/LR.pair_contributions/")
+if(!dir.exists(dir)){dir.create(file.path(dir), recursive = T, showWarnings = F)}
+LR.pairs <- read.delim(paste0(out.dir, "Cellchat_Immune_vs_Endo_Stroma/LR.pairs/LR.pairs.tsv"))
+pathway.name <- unique(LR.pairs$pathway_name)
+ranknet <- rankNet(cellchat, mode = "comparison")
+ranknet <- ranknet$data
+only.CTRL.pathway.name <- subset(ranknet, contribution == 0 & group == "PAH")
+only.CTRL.pathway.name <- as.vector(only.CTRL.pathway.name$name)
+only.PAH.pathway.name <- subset(ranknet, contribution == 0 & group == "CTRL" ) 
+only.PAH.pathway.name <- as.vector(only.PAH.pathway.name$name)
+pathway.name <- unique(LR.pairs$pathway_name)
+pathway.name <-  pathway.name[!pathway.name %in% c(only.CTRL.pathway.name, only.PAH.pathway.name)]
+
+for (pathway in 1:length(pathway.name)) {
+  pathways.show <- pathway.name[pathway]
+  for (i in 1:length(object.list)) {
+    netAnalysis_contribution(object.list[[i]],
+                             signaling = pathways.show,
+                             title = "") +
+      theme(
+            plot.title = element_text(size = 10),
+            axis.title = element_text(size = 10),
+            axis.text.y = element_text(size = 10))
+    
+    ggsave(paste(dir, paste0(pathways.show,"_",names(object.list)[i]),".pdf"), 
+        width = 3.5, height = 3, useDingbats = F)
+  }
+}
+
+
+# only.PAH.pathway.name
+for (pathway in 1:length(only.PAH.pathway.name)) {
+  pathways.show <- only.PAH.pathway.name[pathway]
+    netAnalysis_contribution(object = cellchat.PAH,
+                             signaling = pathways.show,
+                             title = "") +
+      theme(plot.title = element_text(size = 10),
+            axis.title = element_text(size = 10),
+            axis.text.y = element_text(size = 10))
+    
+    ggsave(paste0(dir, pathways.show,"_PAH.pdf"), 
+        width = 3.5, height = 3, useDingbats = F)
+}
+
+
+# only.CTRL.pathway.name
+for (pathway in 1:length(only.CTRL.pathway.name)) {
+  pathways.show <- only.CTRL.pathway.name[pathway]
+    netAnalysis_contribution(object = cellchat.CTRL,
+                             signaling = pathways.show,
+                             title = "") +
+      theme(plot.title = element_text(size = 10),
+            axis.title = element_text(size = 10),
+            axis.text.y = element_text(size = 10))
+    
+    ggsave(paste0(dir, pathways.show,"_CTRL.pdf"), 
+        width = 3.5, height = 3, useDingbats = F)
+}
+
+
+```
+
+
+
+## Pathway signaling roles
+
+```{r fig.width=8, fig.height=4}
+
+#cellchat.CTRL <- netAnalysis_computeCentrality(cellchat.CTRL, slot.name = "netP")
+#pathways.show <- c("ACTIVIN","BMP", "CCL","CXCL","EDN","GDF", "ncWNT","NRG", "PERIOSTIN","SEMA3", "TRAIL", "VGF", "VISFATIN", "WNT")
+
+colors <- c("#83BED9","#D35E63","#BD2D33","#82B577","#BEDCB0","#A0C893","#3D87AF","#DED5E7","#3C1D62",
+            "#8A579C","#65307E","#C4AED0","#AB88B9","#633713","#FFBDF2","#A8AB8E",  "#858A61","#5F9E55","#37842E",
+            "#65A6C7", "#155F28","#A2D6EC","#D1B695","#EC85D8","#23120A","#217024","#7E1512","#353C20", "#8F6843",
+            "#F1B1B4","#B2916E","#D747BB","#B90497","#E3898E","#5A632A","#770262","#1F6A95","#115379","#DB7479")
+
+invisible(gc())
+dir <- paste(main.dir, "Cellchat_Immune_vs_Endo_Stroma/pathway_signaling_roles/CTRL/", sep = "/")
+if(!dir.exists(dir)){dir.create(file.path(dir), recursive = TRUE, showWarnings = FALSE)}
+
+pathways.show <- cellchat.CTRL@netP$pathways
+
+for(i in 1:length(pathways.show)){
+  print(pathways.show[i])
+  pdf(paste(dir,  pathways.show[i], ".pdf", sep = ""), width = 8, height = 2.5, useDingbats = FALSE)
+  netAnalysis_signalingRole_network(cellchat.CTRL, signaling = pathways.show[i],  width = 12,
+                                    height = 2.5, font.size = 7, color.use = colors) 
+  dev.off()
+  }
+
+#cellchat.PAH <- netAnalysis_computeCentrality(cellchat.PAH, slot.name = "netP")
+
+invisible(gc())
+dir <- paste(main.dir, "Cellchat_Immune_vs_Endo_Stroma/pathway_signaling_roles/PAH/", sep = "/")
+if(!dir.exists(dir)){dir.create(file.path(dir), recursive = TRUE, showWarnings = FALSE)}
+
+pathways.show <- cellchat.PAH@netP$pathways
+
+for(i in 1:length(pathways.show)){
+  print(pathways.show[i])
+  pdf(paste(dir,  pathways.show[i], ".pdf", sep = ""), width = 8, height = 2.5, useDingbats = FALSE)
+  netAnalysis_signalingRole_network(cellchat.PAH, signaling = pathways.show[i],  width = 12, 
+                                    height = 2.5, font.size = 7, color.use = colors) 
+  dev.off()
+}
+
+```
+
+
+
+## Celltype signaling
+
+```{r fig.width=10, fig.height=10}
+
+## CTRL celltype signaling
+groupize <- as.numeric(table(cellchat.CTRL@idents)) # number of cells in each cell group
+mat <- cellchat.CTRL@net$weight
+#par(mfrow = c(3,4), xpd=TRUE)
+for (i in 1:nrow(mat)) {
+  mat2 <- matrix(0, nrow = nrow(mat), ncol = ncol(mat), dimnames = dimnames(mat))
+  mat2[i, ] <- mat[i, ]
+  p <- netVisual_circle(mat2, 
+                        vertex.weight = groupize, 
+                        weight.scale = T, 
+                        remove.isolate = F,
+                        edge.weight.max = max(mat), 
+                        title.name = rownames(mat)[i], 
+                        color.use = colors, 
+                        vertex.label.cex = 0.7)
+  pdf(paste(main.dir, "Cellchat_Immune_vs_Endo_Stroma/celltype_signaling_roles/CTRL/", rownames(mat)[i], "_CTRL.pdf", sep = ""), width = 8, height = 8, useDingbats = FALSE)
+  print(p)
+  dev.off()
+}
+
+## PAH celltype signaling
+groupize <- as.numeric(table(cellchat.PAH@idents)) # number of cells in each cell group
+mat <- cellchat.PAH@net$weight
+#par(mfrow = c(3,4), xpd=TRUE)
+for (i in 1:nrow(mat)) {
+  mat2 <- matrix(0, nrow = nrow(mat), ncol = ncol(mat), dimnames = dimnames(mat))
+  mat2[i, ] <- mat[i, ]
+  p <- netVisual_circle(mat2, 
+                        vertex.weight = groupize,
+                        weight.scale = T, 
+                        remove.isolate = T,
+                        edge.weight.max = max(mat), 
+                        title.name = rownames(mat)[i], 
+                        color.use = colors, 
+                        vertex.label.cex = 0.7)
+  pdf(paste(main.dir, "Cellchat_Immune_vs_Endo_Stroma/celltype_signaling_roles/PAH/", rownames(mat)[i], "_PAH.pdf", sep = ""), width = 8, height = 8, useDingbats = FALSE)
+  print(p)
+  dev.off()
+}
+
+```
+
+
+# Session info

@@ -1,0 +1,72 @@
+---
+title: "10x PAH NucSeq - ShinyApp"
+author: '[Yvon Mbouamboua](mbouamboua@ipmc.cnrs.fr)'
+outs:
+  html_document: default
+  html_notebook: default
+date: 'Compiled: `r Sys.Date()`'
+---
+
+# Setting parameters
+
+```{r setup, include=T, warning=FALSE}
+
+options(future.globals.maxSize = 80000*1024^2)
+main.dir <- "/data/data_mbouamboua/projects/10x_htap_nucseq/"
+out.dir <- paste0(main.dir, "004_outs/008_shinyapp/")
+if(!dir.exists(out.dir)){dir.create(file.path(out.dir), recursive = T, showWarnings = F)}
+set.seed(4743)
+
+```
+
+# Require R packages
+
+
+```{r warning=F, message=F}
+
+source("/data/data_mbouamboua/apps/Rpkgs/Rpkgs.R")
+set.seed(1337L)
+
+```
+
+
+# Loading data
+
+```{r fig.width=10, fig.height=7}
+
+htap <- readRDS(paste0(main.dir, "002_data_objects/htap.rds"))
+invisible(gc())
+
+```
+
+
+# ShinyApp
+
+```{r}
+
+DefaultAssay(htap) <- "RNA"
+tmp <- htap
+
+tmp@meta.data <- tmp@meta.data[,c("sample", "nCount_RNA","nFeature_RNA","percent.mito", "sex", "smoker", "group", "population", "celltype_order")]
+
+scConf1 = createConfig(tmp)
+checkConfig(scConf1, tmp)
+
+makeShinyApp(tmp, 
+             scConf1, 
+             gene.mapping = TRUE, 
+             gex.assay = "RNA", 
+             gex.slot = "counts",
+             default.gene1 = "SFTPC", 
+             default.gene2 = "SFTPB",
+             default.multigene = c("AGER", "FOXJ1",  "PROX1","ACKR1", "GJA5","CA4", "SERPINE1", "FCN3",  "KIT", "TMEM40", "KRT15", "SCG2",  "COL15A1", "ACTA2", "DCN", "LTBP2", "REEP1", "RGS6", "ADARB2", "COL1A1", "NKG7", "CD8A", "JCHAIN", "CLEC4C", "CMTM5", "CD1C", "VCAN", "MARCO", "PPARG"),
+             #default.multigene = top$gene,
+             shiny.title = "Pulmonary Arterial Hypertension",
+             shiny.dir = paste0(out.dir)
+) 
+
+rm(tmp)
+
+
+```
+

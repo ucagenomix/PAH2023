@@ -1,0 +1,1158 @@
+---
+title: "10x PAH NucSeq - Data Annotation"
+author: '[Yvon Mbouamboua](mbouamboua@ipmc.cnrs.fr)'
+output:
+  html_document: default
+  html_notebook: default
+date: 'Compiled: `r Sys.Date()`'
+---
+
+# Setting parameters
+
+```{r setup, include=T, warning=FALSE}
+
+options(future.globals.maxSize = 80000*1024^2)
+main.dir <- "/data/data_mbouamboua/projects/10x_htap_nucseq/"
+out.dir <- paste0(main.dir, "003_data_objects/")
+if(!dir.exists(out.dir)){dir.create(file.path(out.dir), recursive = T, showWarnings = F)}
+set.seed(4743)
+
+```
+
+# Require R packages and functions
+
+```{r}
+
+suppressPackageStartupMessages({
+  library(Seurat)
+  library(SeuratDisk)
+  library(Azimuth)
+  library(patchwork)
+  library(ggplot2)
+  library(dplyr)
+  library(SingleCellExperiment)
+})
+
+source("/data/data_mbouamboua/tools/utilities.R")
+#source(paste0(out.dir, "functions.R"))
+
+```
+
+
+# Load integrated data
+
+```{r}
+
+integrated <- readRDS(paste0(out.dir, "002_data_objects/integrated.rds"))
+
+```
+
+
+
+# Azimuth prediction
+
+```{r }
+
+invisible(gc())
+DefaultAssay(integrated) <- "RNA"
+integrated <- FindVariableFeatures(integrated,  nfeatures = 36601)
+integrated <- RunAzimuth(integrated, reference = "lungref")
+invisible(gc())
+
+DefaultAssay(integrated) <- "RNA"
+integrated@reductions$ref.umap <- NULL
+integrated[["refAssay"]] <- NULL
+integrated[["prediction.score.ann_level_1"]] <- NULL
+integrated[["prediction.score.ann_level_2"]] <- NULL
+integrated[["prediction.score.ann_level_3"]] <- NULL
+integrated[["prediction.score.ann_level_4"]] <- NULL
+integrated[["prediction.score.ann_level_5"]] <- NULL
+integrated[["prediction.score.ann_finest_level"]] <- NULL
+
+saveRDS(object = integrated, paste(out.dir, "integrated.rds", sep = "/"))
+invisible(gc())
+
+Dim_Plot(obj = integrated, group.by = "predicted.ann_level_1", label = T, label.ncol = 1)
+
+```
+
+# Celltypist prediction
+
+```{r warning=FALSE}
+
+SaveH5Seurat(htap, paste0(out.dir,"htap.H5Seurat"), overwrite = TRUE)
+Convert( paste0(out.dir,"htap.H5Seurat"), dest = "h5ad", overwrite = TRUE)
+
+
+#filt <- AddMetaData(filt, filt@reductions$umap@cell.embeddings, col.name = c("UMAP_1","UMAP_2"))
+SaveH5Seurat(filt, paste(out.dir,"htap_integrated.H5Seurat", sep ="/"), overwrite = TRUE)
+Convert( paste(out.dir,"htap_integrated.H5Seurat", sep ="/"), dest = "h5ad", overwrite = TRUE)
+saveRDS(filt, paste(out.dir, "htap_integrated.rds", sep = "/"))
+invisible(gc())
+
+h5ad_obs <- readr::read_csv(paste(out.dir,"htap_integrated_h5ad_obs.csv", sep = "/"))
+dim(h5ad_obs)
+
+h5ad_obs <- h5ad_obs[, c("predicted_labels", "over_clustering", "majority_voting", "conf_score")]
+colnames(h5ad_obs) <- c("celltypist_predicted_labels", "celltypist_over_clustering", "celltypist_majority_voting", "celltypist_conf_score")
+metadata <- filt@meta.data
+dim(metadata)
+metadata <- cbind(metadata, h5ad_obs)
+filt@meta.data <- metadata
+dim(filt)
+filt@meta.data[, c("seurat_clusters", "celltypist_majority_voting", "celltypist_conf_score")]
+
+```
+
+
+
+
+# Highlight each seurat cluster
+
+```{r}
+
+Idents(integrated) <- "seurat_clusters"
+seurat_clusters <- as.vector(unique(integrated$seurat_clusters))
+
+for (i in 1:length(seurat_clusters)) {
+  celltype <- seurat_clusters[i]
+  DimPlot(object = integrated,
+          group.by = "seurat_clusters",
+          pt.size = 0.001,
+          cells.highlight = WhichCells(integrated, idents = celltype),
+          cols.highlight = "#1991B4", sizes.highlight = 0.001) +
+    theme(plot.title = element_text(hjust = 0.5, size = 8, face="bold.italic"),
+                    text =  element_text(size = 6, family = "Helvetica"),
+          axis.text = element_text(size = 6, family = "Helvetica")) +
+    ggtitle(paste("Seurat cluster ", celltype, sep = "")) +
+    NoLegend()
+  ggsave(paste(out.dir, "/highlight_singlet/", "seurat_cluster_", celltype, ".png", sep = ""), width = 3, height = 3)
+
+}
+
+```
+
+
+# Check cell clusters quality
+
+```{r fig.width=18, fig.height=5}
+
+VlnPlot(integrated, features = c("nCount_RNA","nFeature_RNA", "percent.mito"), 
+              group.by = "seurat_clusters", stack = T, flip = T, assay = "RNA") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 0.5, vjust = 0.5, colour = "black")) + NoLegend()
+
+```
+
+
+
+```{r}
+# 
+# get_pcs <- function(seurat_object, reduction="pca") {
+#   pct <- seurat_object[[reduction]]@stdev / sum(seurat_object[[reduction]]@stdev) * 100
+#   cumu <- cumsum(pct)
+#   co1 <- which(cumu > 90 & pct < 5)[1]
+#   co2 <- sort(which((pct[1:length(pct) - 1] - pct[2:length(pct)]) > 0.1), decreasing = T)[1] + 1
+#   c(co1, co2)
+# }
+# 
+# 
+# Idents(integrated) <- "seurat_clusters"
+# sub <- subset(integrated, idents = 70, invert = F)
+# #sub <- subset(integrated, cells = rownames(integrated@meta.data[integrated@meta.data$seurat_clusters == 70,]))
+# DimPlot(sub)
+# 
+# # Finding variable features, rescaling and running PCA
+# DefaultAssay(sub) <- "integrated"
+# sub <- FindVariableFeatures(sub, assay = "integrated")
+# features <- VariableFeatures(sub,  assay = "integrated")
+# sub <- ScaleData(sub, assay = "integrated", verbose = T)
+# sub <- RunPCA(sub, assay = "integrated",features = features,verbose = T)
+# 
+# best_pcs <- get_pcs(sub)
+# best_pcs <- min(best_pcs)
+# 
+# sub <- RunUMAP(sub, dims = 1:best_pcs,reduction = "pca", assay = "integrated",verbose = T)
+# sub <- FindNeighbors(sub, dims = 1:best_pcs, reduction = "pca", assay = "integrated")
+# 
+# sub <- FindClusters( object = sub, resolution = "pca", graph.name = "integrated_snn")
+# 
+
+
+```
+
+
+
+
+
+# Megakaryocyte annotation
+
+```{r fig.width=14, fig.height=8}
+
+VlnPlot(integrated, features = c("TMEM40", "KIT","JCHAIN"), group.by = "seurat_clusters", stack = T, flip = T) + NoLegend()
+sub <- subset(integrated, cells = rownames(integrated@meta.data[integrated@meta.data$seurat_clusters == 70,]))
+sub <- New_Seurat(sub, nfeatures = 2000, resolution = 0.2)
+DimPlot(sub, group.by = "seurat_clusters", label = T)
+DefaultAssay(sub) <- "RNA"
+p <- FeaturePlot(sub, "TMEM40", max.cutoff = "q90")
+megak.cells.use <- rownames(subset(p$data, TMEM40 > 0))
+integrated@meta.data[rownames(integrated@meta.data) %in% megak.cells.use,"predicted.ann_finest_level"] <-"Megakaryocytes"
+integrated@meta.data[rownames(integrated@meta.data) %in% megak.cells.use,"predicted.ann_level_1"] <-"Immune"
+Dim_Plot(obj = integrated, group.by = "predicted.ann_finest_level", label = T, label.ncol = 2)
+Dim_Plot(obj = integrated, group.by = "predicted.ann_level_1", label = T, label.ncol = 1)
+
+```
+
+
+# Remove low quality cells
+
+```{r fig.width=14, fig.height=10}
+
+Idents(integrated) <- "seurat_clusters"
+integrated <- subset(integrated, idents = c(17,26,31,45,46,53,55,56,57,59,60,62,64,65,66,68,69,71,74,76,77), invert = T)
+Dim_Plot(obj = integrated, group.by = "seurat_clusters", title = "seurat_clusters", label = T, label.ncol = 2)
+Dim_Plot(obj = integrated, group.by = "predicted.ann_level_1", title = "predicted.ann_level_1", label = T, label.ncol = 1)
+Dim_Plot(obj = integrated, group.by = "predicted.ann_finest_level", title = "predicted.ann_finest_level", label = T, label.ncol = 2)
+
+```
+
+
+```{r fig.width=18, fig.height=5}
+
+VlnPlot(integrated, features = c("nCount_RNA","nFeature_RNA", "percent.mito"), 
+              group.by = "seurat_clusters", stack = T, flip = T, assay = "RNA") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 0.5, vjust = 0.5, colour = "black")) + NoLegend()
+
+```
+
+
+# Epithelial subset
+
+```{r fig.width=10, fig.height=8}
+
+# PTPRC+ (immune cells), EPCAM+ (epithelial cells), PECMacroATP10A+/PTPRC− 
+# (endothelial cells), and PTPRC−/EPCAM−/PECMacroATP10A− (mesenchymal cells)
+
+Idents(integrated) <- "predicted.ann_level_1"
+epi <- subset(integrated, idents = "Epithelial")
+Dim_Plot(obj = epi, group.by = "predicted.ann_finest_level", title = "predicted.ann_finest_level", label = T, label.ncol = 1)
+ggsave(path = paste(out.dir), filename = "raw_epi.png", width = 10, height = 8)
+
+# Remove non-epithelial cells
+
+epi.celltypes <- c("AT2" ,"AT1", "Basal resting", "Multiciliated (non-nasal)", "Club (non-nasal)","Transitional Club-AT2","Tuft",
+                   "Neuroendocrine" ,"Goblet (nasal)","Club (nasal)","Ionocyte", "AT2 proliferating" , "Suprabasal", "Deuterosomal")
+
+Idents(epi) <- "predicted.ann_finest_level"
+epi <- subset(epi, idents = epi.celltypes)
+epi <- New_Seurat(obj = epi, nfeatures = 36601)
+epi <- FindClusters( object = epi, resolution = 3, graph.name = "integrated_snn")
+# Check doublets
+DefaultAssay(epi) <- "RNA"
+epi@meta.data$seurat_clusters <- epi@meta.data$integrated_snn_res.2.5
+Idents(epi) <- "seurat_clusters"
+Dot_Plot(epi, features =  c("EPCAM","PECMacroATP10A","VWF","PTPRC","LUM","DCN","ACTA2","PDGFRB","AGER","SFTPC"), theme_bw = T)
+ggsave(path = paste(out.dir), filename = "epi_dotplot.png", width = 10, height = 8)
+FeaturePlot(epi, features=c("EPCAM","PECMacroATP10A","VWF","PTPRC","LUM","DCN","ACTA2","PDGFRB"), reduction = "umap", max.cutoff = "q90")
+ggsave(path = paste(out.dir), filename = "epi_featureplot.png", width = 10, height = 8)
+Dim_Plot(obj = epi, group.by = "seurat_clusters", title = "seurat_clusters", label = T, label.ncol = 2)
+ggsave(path = paste(out.dir), filename = "epi_seurat_clusters.png", width = 10, height = 8)
+Dim_Plot(obj = epi, group.by = "predicted.ann_finest_level", title = "predicted.ann_finest_level", label = T, label.ncol = 1)
+
+doublets <- ifelse(epi@meta.data$seurat_clusters %in% c(28,30,34,37,38), "Doublets", "Singlets")
+epi@meta.data$doublets <- doublets
+Dim_Plot(obj = epi, group.by = "doublets", title = "Multiplets", label.ncol = 1, label = F)
+ggsave(path = paste(out.dir), filename = "epi_doublet.png", width = 10, height = 8)
+
+# Remove doublets
+Idents(epi) <- "doublets"
+epi <- subset(epi, idents = "Singlets")
+epi <- New_Seurat(obj = epi, nfeatures = 36601)
+
+# Check doublets again
+DefaultAssay(epi) <- "RNA"
+Dot_Plot(epi, features =  c("EPCAM","PECMacroATP10A","VWF","PTPRC","LUM","DCN","ACTA2","PDGFRB","AGER","SFTPC"), theme_bw = T, assay = "RNA")
+ggsave(path = paste(out.dir), filename = "epi_filt_dotplot.png", width = 10, height = 8)
+Dim_Plot(obj = epi, group.by = "seurat_clusters", title = "seurat_clusters", label = T, label.ncol = 1)
+ggsave(path = paste(out.dir), filename = "epi_filt_seurat_clusters.png", width = 10, height = 8)
+FeaturePlot(epi, features=c("EPCAM","PECMacroATP10A","VWF","PTPRC","LUM","DCN","ACTA2","PDGFRB","AGER","SFTPC"), reduction = "umap", max.cutoff = "q90")
+ggsave(path = paste(out.dir), filename = "epi_filt_featureplot.png", width = 10, height = 8)
+Dim_Plot(obj = epi, group.by = "predicted.ann_finest_level", title = "predicted.ann_finest_level", label = T, label.ncol = 1)
+ggsave(path = paste(out.dir), filename = "epi_filt.png", width = 10, height = 8)
+
+saveRDS(object = epi, paste(out.dir, "epi.rds", sep = "/"))
+epi.cells.use <- WhichCells(epi)
+saveRDS(epi.cells.use, paste(out.dir, "epi.cells.use.rds", sep = "/"))
+
+```
+
+
+
+# Endothelial subset
+
+```{r fig.width=10, fig.height=8}
+
+# PTPRC+ (immune cells), EPCAM+ (epithelial cells), PECMacroATP10A+/PTPRC− 
+# (endothelial cells), and PTPRC−/EPCAM−/PECMacroATP10A− (mesenchymal cells)
+
+Idents(integrated) <- "predicted.ann_level_1"
+endo <- subset(integrated, idents = "Endothelial")
+Dim_Plot(obj = endo, group.by = "predicted.ann_finest_level", title = "predicted.ann_finest_level", label = T, label.ncol = 1)
+ggsave(path = paste(out.dir), filename = "raw_endo.png", width = 10, height = 8)
+
+# Remove non-endothelial cells
+
+endo.celltypes <- c("EC aerocyte capillary", "EC general capillary", "EC arterial", "EC venous pulmonary", "EC venous systemic", "Lymphatic EC differentiating", "Lymphatic EC mature")
+
+Idents(endo) <- "predicted.ann_finest_level"
+endo <- subset(endo, idents = endo.celltypes)
+endo <- New_Seurat(obj = endo, nfeatures = 36601)
+
+# Check doublets
+DefaultAssay(endo) <- "RNA"
+#endo@meta.data$seurat_clusters <- endo@meta.data$integrated_snn_res.0.2
+Idents(endo) <- "seurat_clusters"
+Dot_Plot(endo, features =  c("EPCAM","PECMacroATP10A","PTPRC","LUM","DCN"), theme_bw = T)
+ggsave(path = paste(out.dir), filename = "endo_dotplot.png", width = 10, height = 8)
+FeaturePlot(endo, features=c("EPCAM","PECMacroATP10A","PTPRC","LUM","DCN"), reduction = "umap", max.cutoff = "q90")
+ggsave(path = paste(out.dir), filename = "endo_featureplot.png", width = 10, height = 8)
+Dim_Plot(obj = endo, group.by = "seurat_clusters", title = "seurat_clusters", label = T, label.ncol = 2)
+ggsave(path = paste(out.dir), filename = "endo_seurat_clusters.png", width = 10, height = 8)
+
+doublets <- ifelse(endo@meta.data$seurat_clusters %in% c(23,30,31,32,33), "Doublets", "Singlets")
+endo@meta.data$doublets <- doublets
+Dim_Plot(obj = endo, group.by = "doublets", title = "Multiplets", label.ncol = 1, label = F)
+ggsave(path = paste(out.dir), filename = "endo_doublet.png", width = 10, height = 8)
+
+# Remove doublets
+Idents(endo) <- "doublets"
+endo <- subset(endo, idents = "Singlets")
+endo <- New_Seurat(obj = endo, nfeatures = 36601)
+
+# Check doublets again
+DefaultAssay(endo) <- "RNA"
+Dot_Plot(endo, features =  c("EPCAM","PECMacroATP10A","PTPRC","LUM","DCN"), theme_bw = T, assay = "RNA")
+ggsave(path = paste(out.dir), filename = "endo_doublets_2_dotplot.png", width = 10, height = 8)
+
+doublets <- ifelse(endo@meta.data$seurat_clusters %in% c(32), "Doublets", "Singlets")
+endo@meta.data$doublets <- doublets
+Dim_Plot(obj = endo, group.by = "doublets", title = "Multiplets", label.ncol = 1, label = F)
+ggsave(path = paste(out.dir), filename = "endo_doublet_2.png", width = 10, height = 8)
+
+# Remove agains doublets
+Idents(endo) <- "doublets"
+endo <- subset(endo, idents = "Singlets")
+endo <- New_Seurat(obj = endo, nfeatures = 36601)
+DefaultAssay(endo) <- "RNA"
+Dot_Plot(endo, features =  c("EPCAM","PECMacroATP10A","PTPRC","LUM","DCN"), theme_bw = T, assay = "RNA")
+ggsave(path = paste(out.dir), filename = "endo_filt_dotplot.png", width = 10, height = 8)
+Dim_Plot(obj = endo, group.by = "seurat_clusters", title = "seurat_clusters", label = T, label.ncol = 1)
+ggsave(path = paste(out.dir), filename = "endo_filt_seurat_clusters.png", width = 10, height = 8)
+FeaturePlot(endo, features=c("EPCAM","PECMacroATP10A","PTPRC","LUM","DCN"), reduction = "umap", max.cutoff = "q90")
+ggsave(path = paste(out.dir), filename = "endo_filt_featureplot.png", width = 10, height = 8)
+Dim_Plot(obj = endo, group.by = "predicted.ann_finest_level", title = "predicted.ann_finest_level", label = T, label.ncol = 1)
+ggsave(path = paste(out.dir), filename = "endo_filt.png", width = 10, height = 8)
+saveRDS(object = endo, paste(out.dir, "endo.rds", sep = "/"))
+endo.cells.use <- WhichCells(endo)
+saveRDS(endo.cells.use, paste(out.dir, "endo.cells.use.rds", sep = "/"))
+
+```
+
+
+
+# Immune subset
+
+```{r fig.width=10, fig.height=8}
+
+# PTPRC+ (immune cells), EPCAM+ (epithelial cells), PECMacroATP10A+/PTPRC− 
+# (endothelial cells), and PTPRC−/EPCAM−/PECMacroATP10A− (mesenchymal cells)
+
+Idents(integrated) <- "predicted.ann_level_1"
+imm <- subset(integrated, idents = "Immune")
+Dim_Plot(obj = imm, group.by = "predicted.ann_finest_level", title = "predicted.ann_finest_level", label = T, label.ncol = 1)
+ggsave(path = paste(out.dir), filename = "raw_imm.png", width = 10, height = 8)
+
+unique(imm$predicted.ann_finest_level)
+# Remove non-immthelial cells
+
+imm.celltypes <- c("DC2","Alveolar macrophages", "CD4 T cells","Mast cells", "CD8 T cells", "B cells","Plasma cells","Classical monocytes" , "Non-classical monocytes" ,  "Interstitial Mφ perivascular", "Monocyte-derived Mφ","Plasmacytoid DCs" , "NK cells", "Megakaryocytes" ,"Alveolar Mφ proliferating" , "T cells proliferating")
+
+Idents(imm) <- "predicted.ann_finest_level"
+imm <- subset(imm, idents = imm.celltypes)
+Dim_Plot(obj = imm, group.by = "predicted.ann_finest_level", label = T, label.ncol = 2)
+
+imm <- New_Seurat(obj = imm, nfeatures = 36601)
+
+# Check doublets
+DefaultAssay(imm) <- "RNA"
+#imm@meta.data$seurat_clusters <- imm@meta.data$integrated_snn_res.0.2
+Idents(imm) <- "seurat_clusters"
+Dot_Plot(imm, features =  c("EPCAM","PECMacroATP10A","PTPRC","LUM","DCN","ACTA2","PDGFRB","VWF"), theme_bw = T)
+ggsave(path = paste(out.dir), filename = "imm_dotplot.png", width = 10, height = 8)
+FeaturePlot(imm, features=c("EPCAM","PECMacroATP10A","PTPRC","LUM","DCN","ACTA2","PDGFRB","VWF"), reduction = "umap", max.cutoff = "q90")
+ggsave(path = paste(out.dir), filename = "imm_featureplot.png", width = 10, height = 8)
+Dim_Plot(obj = imm, group.by = "seurat_clusters", title = "seurat_clusters", label = T, label.ncol = 2)
+ggsave(path = paste(out.dir), filename = "imm_seurat_clusters.png", width = 10, height = 8)
+Dim_Plot(obj = imm, group.by = "predicted.ann_finest_level", title = "predicted.ann_finest_level", label = T, label.ncol = 1)
+ggsave(path = paste(out.dir), filename = "imm_predicted.ann_finest_level.png", width = 10, height = 8)
+
+
+doublets <- ifelse(imm@meta.data$seurat_clusters %in% c(29,30), "Doublets", "Singlets")
+imm@meta.data$doublets <- doublets
+Dim_Plot(obj = imm, group.by = "doublets", title = "Multiplets", label.ncol = 1, label = F)
+ggsave(path = paste(out.dir), filename = "imm_doublet.png", width = 10, height = 8)
+
+# Remove doublets
+Idents(imm) <- "doublets"
+imm <- subset(imm, idents = "Singlets")
+imm <- New_Seurat(obj = imm, nfeatures = 36601)
+
+# Check doublets again
+DefaultAssay(imm) <- "RNA"
+Dot_Plot(imm, features =  c("EPCAM","PECMacroATP10A","VWF","PTPRC","LUM","DCN","ACTA2","PDGFRB"), theme_bw = T, assay = "RNA")
+ggsave(path = paste(out.dir), filename = "imm_filt_dotplot.png", width = 10, height = 8)
+
+doublets <- ifelse(imm@meta.data$seurat_clusters %in% c(33), "Doublets", "Singlets")
+imm@meta.data$doublets <- doublets
+Dim_Plot(obj = imm, group.by = "doublets", title = "Multiplets", label.ncol = 1, label = F)
+ggsave(path = paste(out.dir), filename = "imm_doublet.png", width = 10, height = 8)
+
+# Remove doublets
+Idents(imm) <- "doublets"
+imm <- subset(imm, idents = "Singlets")
+imm <- New_Seurat(obj = imm, nfeatures = 36601)
+
+Dot_Plot(imm, features =  c("EPCAM","PECMacroATP10A","VWF","PTPRC","LUM","DCN","ACTA2","PDGFRB"), theme_bw = T, assay = "RNA")
+ggsave(path = paste(out.dir), filename = "imm_filt_dotplot.png", width = 10, height = 8)
+Dim_Plot(obj = imm, group.by = "seurat_clusters", title = "seurat_clusters", label = T, label.ncol = 1)
+ggsave(path = paste(out.dir), filename = "imm_filt_seurat_clusters.png", width = 10, height = 8)
+FeaturePlot(imm, features=c("EPCAM","PECMacroATP10A","VWF","PTPRC","LUM","DCN","ACTA2","PDGFRB"), reduction = "umap", max.cutoff = "q90")
+ggsave(path = paste(out.dir), filename = "imm_filt_featureplot.png", width = 10, height = 8)
+Dim_Plot(obj = imm, group.by = "predicted.ann_finest_level", title = "predicted.ann_finest_level", label = T, label.ncol = 1)
+ggsave(path = paste(out.dir), filename = "imm_filt.png", width = 10, height = 8)
+saveRDS(object = imm, paste(out.dir, "imm.rds", sep = "/"))
+imm.cells.use <- WhichCells(imm)
+saveRDS(imm.cells.use, paste(out.dir, "imm.cells.use.rds", sep = "/"))
+
+
+```
+
+
+
+# Stromal subset
+
+```{r fig.width=10, fig.height=8}
+
+# PTPRC+ (immune cells), EPCAM+ (epithelial cells), PECMacroATP10A+/PTPRC− 
+# (endothelial cells), and PTPRC−/EPCAM−/PECMacroATP10A− (mesenchymal cells)
+
+Idents(integrated) <- "predicted.ann_level_1"
+stroma <- subset(integrated, idents = "Stroma")
+Dim_Plot(obj = stroma, group.by = "predicted.ann_finest_level", title = "predicted.ann_finest_level", label = T, label.ncol = 1)
+ggsave(path = paste(out.dir), filename = "raw_stroma.png", width = 10, height = 8)
+
+# Remove non-stromathelial cells
+
+stroma.celltypes <- c("Adventitial fibroblasts", "Myofibroblasts", "Alveolar fibroblasts", "Smooth muscle", "Pericytes", "SM activated stress response")
+
+Idents(stroma) <- "predicted.ann_finest_level"
+stroma <- subset(stroma, idents = stroma.celltypes)
+Dim_Plot(obj = stroma, group.by = "predicted.ann_finest_level", title = "predicted.ann_finest_level", label = T, label.ncol = 1)
+
+stroma <- New_Seurat(obj = stroma, nfeatures = 36601, resolution = c(0.2,0.5,2.5))
+
+# Check doublets
+DefaultAssay(stroma) <- "RNA"
+#stroma@meta.data$seurat_clusters <- stroma@meta.data$integrated_snn_res.0.5
+Idents(stroma) <- "seurat_clusters"
+Dot_Plot(stroma, features =  c("EPCAM","PECMacroATP10A","VWF", "PTPRC","LUM","DCN","ACTA2","PDGFRB"), theme_bw = T)
+ggsave(path = paste(out.dir), filename = "stroma_dotplot.png", width = 10, height = 8)
+FeaturePlot(stroma, features=c("EPCAM","PECMacroATP10A","VWF","PTPRC","LUM","DCN","ACTA2","PDGFRB"), reduction = "umap", max.cutoff = "q90")
+ggsave(path = paste(out.dir), filename = "stroma_featureplot.png", width = 10, height = 8)
+Dim_Plot(obj = stroma, group.by = "seurat_clusters", title = "seurat_clusters", label = T, label.ncol = 2)
+ggsave(path = paste(out.dir), filename = "stroma_seurat_clusters.png", width = 10, height = 8)
+Dim_Plot(obj = stroma, group.by = "predicted.ann_finest_level", title = "predicted.ann_finest_level", label = T, label.ncol = 1)
+
+doublets <- ifelse(stroma@meta.data$seurat_clusters %in% c(18,20,22,23,25,27,28,29,30), "Doublets", "Singlets")
+stroma@meta.data$doublets <- doublets
+
+Dim_Plot(obj = stroma, group.by = "doublets", title = "Multiplets", label.ncol = 1, label = F)
+ggsave(path = paste(out.dir), filename = "stroma_doublet.png", width = 10, height = 8)
+
+# Remove doublets
+Idents(stroma) <- "doublets"
+stroma <- subset(stroma, idents = "Singlets")
+stroma <- New_Seurat(obj = stroma, nfeatures = 36601)
+DefaultAssay(stroma) <- "RNA"
+Dot_Plot(stroma, features =  c("EPCAM","PECMacroATP10A","VWF", "PTPRC","LUM","DCN","ACTA2","PDGFRB"), theme_bw = T, assay = "RNA")
+Dim_Plot(obj = stroma, group.by = "seurat_clusters", title = "seurat_clusters", label = T, label.ncol = 1)
+
+# Check doublets again
+DefaultAssay(stroma) <- "RNA"
+Dot_Plot(stroma, features =  c("EPCAM","PECMacroATP10A","VWF", "PTPRC","LUM","DCN","ACTA2","PDGFRB"), theme_bw = T, assay = "RNA")
+ggsave(path = paste(out.dir), filename = "stroma_filt_dotplot.png", width = 10, height = 8)
+Dim_Plot(obj = stroma, group.by = "seurat_clusters", title = "seurat_clusters", label = T, label.ncol = 1)
+ggsave(path = paste(out.dir), filename = "stroma_filt_seurat_clusters.png", width = 10, height = 8)
+FeaturePlot(stroma, features=c("EPCAM","PECMacroATP10A","VWF","PTPRC","LUM","DCN","ACTA2","PDGFRB"), reduction = "umap", max.cutoff = "q90")
+ggsave(path = paste(out.dir), filename = "stroma_filt_featureplot.png", width = 10, height = 8)
+Dim_Plot(obj = stroma, group.by = "predicted.ann_finest_level", title = "predicted.ann_finest_level", label = T, label.ncol = 1)
+ggsave(path = paste(out.dir), filename = "stroma_filt.png", width = 10, height = 8)
+saveRDS(object = stroma, paste(out.dir, "stroma.rds", sep = "/"))
+stroma.cells.use <- WhichCells(stroma)
+saveRDS(stroma.cells.use, paste(out.dir, "stroma.cells.use.rds", sep = "/"))
+
+```
+
+
+# Merge all cell population objects
+
+```{r fig.width=14, fig.height=8}
+
+epi.cells.use <- readRDS(paste(out.dir, "epi.cells.use.rds", sep = "/"))
+endo.cells.use <- readRDS(paste(out.dir, "endo.cells.use.rds", sep = "/"))
+imm.cells.use <- readRDS(paste(out.dir, "imm.cells.use.rds", sep = "/"))
+stroma.cells.use <- readRDS(paste(out.dir, "stroma.cells.use.rds", sep = "/"))
+length(c(epi.cells.use,endo.cells.use,imm.cells.use,stroma.cells.use))
+
+DefaultAssay(integrated) <- "RNA"
+htap <- subset(integrated, cells = c(epi.cells.use,endo.cells.use,imm.cells.use,stroma.cells.use))
+rm(epi.cells.use,endo.cells.use,imm.cells.use,stroma.cells.use)
+dim(htap)
+
+Dim_Plot(obj = integrated, group.by = "predicted.ann_level_1", title = "predicted.ann_level_1", label = T, label.ncol = 1)
+#ggsave(path = paste(out.dir), filename = "integrated_umap_raw_post.png", width = 10, height = 8)
+
+Dim_Plot(obj = htap, group.by = "predicted.ann_level_1", title = "predicted.ann_level_1", label = T, label.ncol = 1)
+#ggsave(path = paste(out.dir), filename = "integrated_umap_filt.png", width = 10, height = 8)
+
+htap <- New_Seurat(obj = htap, nfeatures = 3000, resolution = 4)
+invisible(gc())
+
+#saveRDS(object = htap, paste(out.dir, "htap.rds", sep = "/"))
+invisible(gc())
+Dim_Plot(obj = htap, group.by = "predicted.ann_level_1", title = "predicted.ann_level_1", label = T, label.ncol = 1)
+Dim_Plot(obj = htap, group.by = "predicted.ann_finest_level", title = "predicted.ann_finest_level", label = T, label.ncol = 2)
+
+```
+
+
+```{r}
+dim(htap[["RNA"]]@counts)
+dim(htap[["RNA"]]@data)
+dim(htap[["integrated"]]@counts)
+dim(htap[["integrated"]]@data)
+```
+
+
+# Add meta data
+
+```{r}
+
+Idents(htap) <-"orig.ident"
+htap[["sample"]]=""
+htap@meta.data[htap@meta.data$orig.ident %in% c("PRC_2"),"sample"] <-"CTRL.D505"
+htap@meta.data[htap@meta.data$orig.ident %in% c("PRC_3"),"sample"] <-"CTRL.D506"
+htap@meta.data[htap@meta.data$orig.ident %in% c("PRC_5"),"sample"] <-"CTRL.D509" 
+htap@meta.data[htap@meta.data$orig.ident %in% c("PRC_7"),"sample"] <-"CTRL.D507"
+htap@meta.data[htap@meta.data$orig.ident %in% c("PRC_8"),"sample"] <-"CTRL.D508"
+htap@meta.data[htap@meta.data$orig.ident %in% c("PRC_16"),"sample"] <-"CTRL.D530"
+htap@meta.data[htap@meta.data$orig.ident %in% c("PRC_18"),"sample"] <-"CTRL.D531"
+htap@meta.data[htap@meta.data$orig.ident %in% c("PAH_704945"),"sample"] <-"PAH.D510"
+htap@meta.data[htap@meta.data$orig.ident %in% c("PAH_675093"),"sample"] <-"PAH.D511"
+htap@meta.data[htap@meta.data$orig.ident %in% c("PAH_698029"),"sample"] <-"PAH.D512"
+htap@meta.data[htap@meta.data$orig.ident %in% c("PAH_672704"),"sample"] <-"PAH.D513"
+htap@meta.data[htap@meta.data$orig.ident %in% c("PAH_693770"),"sample"] <-"PAH.D514"
+htap@meta.data[htap@meta.data$orig.ident %in% c("PAH_691048"),"sample"] <-"PAH.D532"
+htap@meta.data[htap@meta.data$orig.ident %in% c("PAH_688194"),"sample"] <-"PAH.D533"
+
+
+Idents(htap) <-"orig.ident"
+htap[["group"]]=""
+htap@meta.data[htap@meta.data$orig.ident %in% c("PRC_2"),"group"] <-"CTRL"
+htap@meta.data[htap@meta.data$orig.ident %in% c("PRC_3"),"group"] <-"CTRL"
+htap@meta.data[htap@meta.data$orig.ident %in% c("PRC_5"),"group"] <-"CTRL" 
+htap@meta.data[htap@meta.data$orig.ident %in% c("PRC_7"),"group"] <-"CTRL"
+htap@meta.data[htap@meta.data$orig.ident %in% c("PRC_8"),"group"] <-"CTRL"
+htap@meta.data[htap@meta.data$orig.ident %in% c("PRC_16"),"group"] <-"CTRL"
+htap@meta.data[htap@meta.data$orig.ident %in% c("PRC_18"),"group"] <-"CTRL"
+htap@meta.data[htap@meta.data$orig.ident %in% c("PAH_675093"),"group"] <-"PAH"
+htap@meta.data[htap@meta.data$orig.ident %in% c("PAH_704945"),"group"] <-"PAH"
+htap@meta.data[htap@meta.data$orig.ident %in% c("PAH_698029"),"group"] <-"PAH"
+htap@meta.data[htap@meta.data$orig.ident %in% c("PAH_693770"),"group"] <-"PAH"
+htap@meta.data[htap@meta.data$orig.ident %in% c("PAH_691048"),"group"] <-"PAH"
+htap@meta.data[htap@meta.data$orig.ident %in% c("PAH_672704"),"group"] <-"PAH"
+htap@meta.data[htap@meta.data$orig.ident %in% c("PAH_688194"),"group"] <-"PAH"
+
+
+# sex
+Idents(htap) <-"orig.ident"
+htap[["sex"]]=""
+htap@meta.data[htap@meta.data$orig.ident %in% c("PRC_2"),"sex"] <-"Man"
+htap@meta.data[htap@meta.data$orig.ident %in% c("PRC_3"),"sex"] <-"Man"
+htap@meta.data[htap@meta.data$orig.ident %in% c("PRC_5"),"sex"] <-"Man" 
+htap@meta.data[htap@meta.data$orig.ident %in% c("PRC_7"),"sex"] <-"Man"
+htap@meta.data[htap@meta.data$orig.ident %in% c("PRC_8"),"sex"] <-"Man"
+htap@meta.data[htap@meta.data$orig.ident %in% c("PRC_16"),"sex"] <-"Woman"
+htap@meta.data[htap@meta.data$orig.ident %in% c("PRC_18"),"sex"] <-"Woman"
+htap@meta.data[htap@meta.data$orig.ident %in% c("PAH_675093"),"sex"] <-"Woman"
+htap@meta.data[htap@meta.data$orig.ident %in% c("PAH_704945"),"sex"] <-"Woman"
+htap@meta.data[htap@meta.data$orig.ident %in% c("PAH_698029"),"sex"] <-"Man"
+htap@meta.data[htap@meta.data$orig.ident %in% c("PAH_693770"),"sex"] <-"Woman"
+htap@meta.data[htap@meta.data$orig.ident %in% c("PAH_691048"),"sex"] <-"Woman"
+htap@meta.data[htap@meta.data$orig.ident %in% c("PAH_672704"),"sex"] <-"Woman"
+htap@meta.data[htap@meta.data$orig.ident %in% c("PAH_688194"),"sex"] <-"Man"
+
+
+# Smoker status
+Idents(htap) <-"orig.ident"
+htap[["smoker"]]=""
+htap@meta.data[htap@meta.data$orig.ident %in% c("PRC_2"),"smoker"] <-"Smoker"
+htap@meta.data[htap@meta.data$orig.ident %in% c("PRC_3"),"smoker"] <-"Smoker"
+htap@meta.data[htap@meta.data$orig.ident %in% c("PRC_5"),"smoker"] <-"Smoker" 
+htap@meta.data[htap@meta.data$orig.ident %in% c("PRC_7"),"smoker"] <-"Smoker"
+htap@meta.data[htap@meta.data$orig.ident %in% c("PRC_8"),"smoker"] <-"NonSmoker"
+htap@meta.data[htap@meta.data$orig.ident %in% c("PRC_16"),"smoker"] <-"NonSmoker"
+htap@meta.data[htap@meta.data$orig.ident %in% c("PRC_18"),"smoker"] <-"Smoker"
+htap@meta.data[htap@meta.data$orig.ident %in% c("PAH_675093"),"smoker"] <-"NonSmoker"
+htap@meta.data[htap@meta.data$orig.ident %in% c("PAH_704945"),"smoker"] <-"NonSmoker"
+htap@meta.data[htap@meta.data$orig.ident %in% c("PAH_698029"),"smoker"] <-"NonSmoker"
+htap@meta.data[htap@meta.data$orig.ident %in% c("PAH_693770"),"smoker"] <-"Smoker"
+htap@meta.data[htap@meta.data$orig.ident %in% c("PAH_691048"),"smoker"] <-"NonSmoker"
+htap@meta.data[htap@meta.data$orig.ident %in% c("PAH_672704"),"smoker"] <-"NonSmoker"
+htap@meta.data[htap@meta.data$orig.ident %in% c("PAH_688194"),"smoker"] <-"Smoker"
+
+```
+
+
+# Check cleanned datasets
+
+```{r fig.width=25, fig.height=8}
+
+Idents(htap) <-"seurat_clusters"
+data <- as.data.frame(table(htap@active.ident, htap$predicted.ann_level_1))
+data$Var1 <- factor(data$Var1, levels = levels(htap@meta.data$seurat_clusters))
+
+p1 <- ggplot(data, aes(x = Var1, y = Freq, fill = Var2)) +
+  theme_bw(base_size = 15) +
+  geom_col(position = "fill", width = 0.8) +
+  theme(legend.text = element_text(size = 8),
+        legend.key.height = unit(0.4, 'cm'),
+        legend.key.width = unit(0.4, 'cm')) +
+  scale_fill_manual(name = 'Populations', values = dittoSeq::dittoColors()) +
+  xlab(" ") +
+  ylab("Cell proportion")
+
+Idents(htap) <-"seurat_clusters"
+data <- as.data.frame(table(htap@active.ident, htap$predicted.ann_finest_level))
+data$Var1 <- factor(data$Var1, levels = levels(htap@meta.data$seurat_clusters))
+
+p2 <- ggplot(data, aes(x = Var1, y = Freq, fill = Var2)) +
+  theme_bw(base_size = 15) +
+  geom_col(position = "fill", width = 0.8) +
+  theme(legend.text = element_text(size = 8),
+        legend.key.height = unit(0.4, 'cm'),
+        legend.key.width = unit(0.4, 'cm')) +
+  scale_fill_manual(name = 'celltype', values = dittoSeq::dittoColors()) +
+  xlab(" ") +
+  ylab("Cell proportion")
+
+
+p3 <- VlnPlot(htap, features = c("nCount_RNA","nFeature_RNA", "percent.mito"), 
+              group.by = "seurat_clusters", stack = T, flip = T, assay = "RNA") +
+  theme(axis.text.x = element_text(angle = 0, hjust = 0.5, vjust = 0.5, colour = "black")) + 
+  xlab("Seurat_clusters") + NoLegend()
+
+p1/p2/p3
+
+```
+
+
+
+
+
+# Manual annotation
+
+
+```{r fig.width=8, fig.height=6}
+
+DimPlot(htap, group.by = "seurat_clusters", label = T) + NoLegend()
+DefaultAssay(htap) <- "RNA"
+FeaturePlot(htap, c("SFTPC","AGER"), max.cutoff = "q90", slot = "counts")
+
+```
+
+
+
+
+
+
+## AT2 sub-population
+
+```{r  fig.width=10, fig.height=5}
+
+# https://www-nature-com.insb.bib.cnrs.fr/articles/s41467-022-28062-9.pdf
+# https://www-nature-com.insb.bib.cnrs.fr/articles/s41586-020-2922-4.pdf
+invisible(gc())
+Idents(htap) <- "integrated_snn_res.0.8"
+sub <- subset(htap, idents = c(0,1,7,9))
+DefaultAssay(sub) <- "RNA"
+sub <- NormalizeData(sub)
+
+DimPlot(sub, label = T)
+DotPlot(object = sub, 
+            group.by = "seurat_clusters", 
+            features = c("SFTPB","WIF1", "NNMT", "SFTPD","SFTPC","SFTPA2","SFTPA1","SERPINA1","PGC","NPC2","NAPSA","LAMP3","HHIP","CA2","ETV5","YAP1","TNIK","TEAD1","TCF7L2","TCF12","STAT3","PTPRM","FOXP2","FOXP1","ERBB4")) + coord_flip() + scale_colour_gradientn(colours = rev(RColorBrewer::brewer.pal(n = 11, name = "RdBu")))
+
+
+Idents(htap) <- "celltype"
+sub <- subset(htap, idents = c("AT2a","AT2b","AT2"))
+
+DotPlot(object = sub, 
+            group.by = "celltype", 
+            features = c("SFTPB","WIF1", "NNMT", "SFTPD","SFTPC","SFTPA2","SFTPA1","SERPINA1","PGC","NPC2","NAPSA","LAMP3","HHIP","CA2","ETV5","YAP1","TNIK","TEAD1","TCF7L2","TCF12","STAT3","PTPRM","FOXP2","FOXP1","ERBB4")) + coord_flip() + scale_colour_gradientn(colours = rev(RColorBrewer::brewer.pal(n = 11, name = "RdBu")))
+
+#ggsave(paste(output_dir, "AT2_subpopulation.pdf", sep = "/"), width = 5, height = 5, useDingbats = FALSE)
+
+```
+```{r fig.width=10, fig.height=10}
+
+htap@meta.data$seurat_clusters <- htap@meta.data$integrated_snn_res.0.8
+Dim_Plot(obj = htap, group.by = "seurat_clusters", label = T, label.ncol = 2) + NoLegend()
+
+```
+
+```{r}
+htap@meta.data$seurat_clusters <- htap@meta.data$integrated_snn_res.4
+Idents(htap) <- "seurat_clusters"
+DimPlot(object = htap,group.by = "seurat_clusters",cells.highlight = WhichCells(htap, idents = 31))
+
+```
+
+## pre-TB-SC, TRB-SC
+
+```{r fig.width=3, fig.height=5, warning=FALSE}
+
+Idents(htap) <- "integrated_snn_res.4"
+sub <- subset(htap, idents = c(19,36,51))
+# TRB-SC = SFTPB+SCGB3A2+SCGB1A1-
+# pre-TB-SC = SFTPB+SCGB3A2+SCGB1A1+
+
+VlnPlot(sub, features = c("BPIFB1","ERN2","LCN2","TSPAN8", "SFTPB", "SFTPC",  "SCGB3A2", "SCGB1A1"), group.by = "integrated_snn_res.4", stack = T, flip = T) +
+  theme(text = element_text(size = 8),
+    axis.text.x = element_text(size = 8, angle = 90, hjust = 1, vjust = 0.5, colour = "black"),
+    axis.title.x = element_blank(),
+    axis.text.y = element_text(size = 8)
+    )+ NoLegend() + ggtitle("pre-TB-SC, TRB-SC, Secretory")
+ggsave(paste(out.dir, "pre-TB-SC_TRB-SC_Secretory.png", sep = "/"), width = 3, height = 5)
+
+```
+
+
+## Macrophage subsets
+
+```{r fig.width=10, fig.height=6}
+
+#https://www.cusabio.com/c-20938.html(M1 <- c("CD86"), M2 <- c("CD163")
+#M1 <- c("CD86")
+#M2 <- c("CD163")
+
+# https://www-nature-com.insb.bib.cnrs.fr/articles/s41388-020-01528-0
+# canonical M1
+
+Idents(htap) <- "integrated_snn_res.4"
+sub <- subset(htap, idents = )
+DimPlot(sub, group.by = "integrated_snn_res.4", label = T)
+M1 <- c("IL1B","CD40","CD86","FCGR1A")
+# canonical M2
+M2 <- c("MSR1","CD163","MARCO","TGFB1")
+DefaultAssay(sub) <- "RNA"
+# sub <- AddModuleScore(sub, features = list("CD86"), name = "M1")
+# sub <- AddModuleScore(sub, features = list("CD163"), name = "M2")
+sub <- AddModuleScore(sub, features = list(M1), name = "M1")
+sub <- AddModuleScore(sub, features = list(M2), name = "M2")
+colnames(sub@meta.data)[which(names(sub@meta.data) == "M11")] <- "Macrophage M1"
+colnames(sub@meta.data)[which(names(sub@meta.data) == "M21")] <- "Macrophage M2"
+#View(sub@meta.data)
+Nebulosa::plot_density(sub, features = c("Macrophage M1","Macrophage M2","CD86","CD163"), slot = "data", pal = "inferno")
+ggsave(paste(out.dir, "alveolar_macrophage_m1_m2.png", sep = "/"), width = 10, height = 8)
+
+```
+
+
+
+
+```{r fig.width=10, fig.height=10}
+DimPlot(htap, group.by = "integrated_snn_res.2.5", label = T, repel = T) + NoLegend()
+```
+
+
+```{r fig.width=14, fig.height=7, warning=FALSE}
+
+htap@meta.data$seurat_clusters <- htap@meta.data$integrated_snn_res.2.5
+
+pheatmap::pheatmap(scale(prop.table(as.matrix(table(htap@meta.data$predicted.ann_finest_level,htap@meta.data$integrated_snn_res.2.5)), 2)*100), 
+                   angle_col = 0, main ="celltype", cluster_rows = F, cluster_cols = T
+                   #color = colorRampPalette(c("black", "white", "red"))(100)
+                   )
+
+```
+
+# Subclustering
+
+```{r fig.width=10, fig.height=8}
+DefaultAssay(htap) <- "integrated"
+Idents(htap) <- "seurat_clusters"
+htap <- FindSubCluster(htap, cluster = 45, subcluster.name = "subclusters", graph.name = "integrated_snn", resolution = 0.2)
+DimPlot(htap, group.by = "subclusters", label = T) + NoLegend()
+
+```
+
+
+# Vascular SMC and Airway SMC
+
+```{r fig.width=14, fig.height=5, warning=FALSE}
+
+DefaultAssay(htap) <- "RNA"
+Idents(htap) <- "seurat_clusters"
+VlnPlot(htap, features = c("CDH13","PTGIS","NTRK3","ADGRL3", "CNN1","ITGA7",#VSMC
+                          "TGFBR3","GREM2","WNT5A","GREM1","BMP3","DES","ACTA2","LGR6" #ASMC
+                          ), group.by = "seurat_clusters", stack = T, flip = T)+ NoLegend()
+
+```
+
+```{r fig.width=10, fig.height=10, warning=F}
+
+Idents(htap) <- "seurat_clusters"
+sub <- subset(htap, idents = 45)
+sub <- New_Seurat(sub, resolution = 0.08, nfeatures = 3000)
+markers <- FindAllMarkers(sub, assay = "RNA", only.pos = T)
+top <- markers %>% group_by(cluster) %>% top_n(n = 10, wt = avg_log2FC)
+DotPlot(sub, group.by = "seurat_clusters", features = top$gene) + RotatedAxis()
+DimPlot(sub, group.by = "seurat_clusters")
+
+FeaturePlot(sub, features = c("CDH13","PTGIS","NTRK3","ADGRL3", "CNN1","ITGA7","RGS6",#VSMC
+                          "TGFBR3","GREM2","WNT5A","GREM1","BMP3","DES","ACTA2","LGR6" #ASMC
+                          ), max.cutoff = "q90")
+
+vsm.cells <- WhichCells(object = sub, idents = 0)
+asm.cells <- WhichCells(object = sub, idents = 1)
+
+```
+
+
+
+# Label
+
+```{r fig.width=14, fig.height=10}
+
+# Epithelial
+htap@meta.data$celltype <- NULL
+htap@meta.data[htap@meta.data$integrated_snn_res.4 %in% c(19),"celltype"] <-"AT0"
+htap@meta.data[htap@meta.data$integrated_snn_res.4 %in% c(1,3,4,5,6,8,32),"celltype"] <-"AT2a"
+htap@meta.data[htap@meta.data$integrated_snn_res.4 %in% c(10,13,15,18,21,29),"celltype"] <-"AT2b"
+htap@meta.data[htap@meta.data$integrated_snn_res.4 %in% c(26),"celltype"] <-"AT1-AT2"
+htap@meta.data[htap@meta.data$integrated_snn_res.4 %in% c(0,2,7),"celltype"] <-"AT1" # AGER+RTKN2+ (Murthy 2022)
+htap@meta.data[htap@meta.data$integrated_snn_res.4 %in% c(17,24,50),"celltype"] <-"AT1-imm" # AGER+RTKN2- (Murthy 2022)
+htap@meta.data[htap@meta.data$integrated_snn_res.4 %in% c(20),"celltype"] <-"MCC"
+htap@meta.data[htap@meta.data$integrated_snn_res.4 %in% c(51),"celltype"] <-"Pre-TB-SC"
+htap@meta.data[htap@meta.data$integrated_snn_res.4 %in% c(36),"celltype"] <-"TRB-SC"
+htap@meta.data[htap@meta.data$integrated_snn_res.4 %in% c(52),"celltype"] <-"Basal"
+htap@meta.data[htap@meta.data$azimuth_finest_level %in% c("Basal resting"),"celltype"] <-"Basal"
+htap@meta.data[htap@meta.data$celltypist_majority_voting %in% c("Neuroendocrine"),"celltype"] <-"PNEC"
+
+# Endothelial
+htap@meta.data[htap@meta.data$integrated_snn_res.4 %in% c(39),"celltype"] <-"Lymph"
+htap@meta.data[htap@meta.data$integrated_snn_res.4 %in% c(30,53),"celltype"] <-"V-SysEC"
+htap@meta.data[htap@meta.data$integrated_snn_res.4 %in% c(35,40),"celltype"] <-"V-PulmEC"
+htap@meta.data[htap@meta.data$integrated_snn_res.4 %in% c(25,28,34),"celltype"] <-"ArtEC"
+htap@meta.data[htap@meta.data$integrated_snn_res.4 %in% c(12,38),"celltype"] <-"aCap"
+htap@meta.data[htap@meta.data$integrated_snn_res.4 %in% c(9,11,14,37,57),"celltype"] <-"gCap"
+
+# Stromal
+htap@meta.data[htap@meta.data$integrated_snn_res.4 %in% c(23,48),"celltype"] <-"AlvFibro"
+htap@meta.data[htap@meta.data$integrated_snn_res.4 %in% c(42,44),"celltype"] <-"AdvFibro"
+htap@meta.data[htap@meta.data$integrated_snn_res.4 %in% c(60),"celltype"] <-"MyoFibro"
+htap@meta.data[htap@meta.data$integrated_snn_res.4 %in% c(55),"celltype"] <-"Peri"
+htap@meta.data[htap@meta.data$integrated_snn_res.4 %in% c(45),"celltype"] <-"VSMC"
+htap@meta.data[rownames(htap@meta.data) %in% asm.cells,"celltype"] <-"ASMC"
+
+# Immune
+htap@meta.data[htap@meta.data$integrated_snn_res.4 %in% c(16,33),"celltype"] <-"CD4"
+htap@meta.data[htap@meta.data$integrated_snn_res.4 %in% c(46,49),"celltype"] <-"CD8"
+htap@meta.data[htap@meta.data$azimuth_finest_level %in% c("T cells proliferating"),"celltype"] <-"T-prolif"
+htap@meta.data[htap@meta.data$integrated_snn_res.4 %in% c(22),"celltype"] <-"NK"
+htap@meta.data[htap@meta.data$integrated_snn_res.4 %in% c(43),"celltype"] <-"Mono"
+htap@meta.data[htap@meta.data$integrated_snn_res.4 %in% c(58,61),"celltype"] <-"Plasma"
+htap@meta.data[htap@meta.data$integrated_snn_res.4 %in% c(47),"celltype"] <-"Mast"
+htap@meta.data[htap@meta.data$integrated_snn_res.4 %in% c(41),"celltype"] <-"Inter-Macro"
+htap@meta.data[htap@meta.data$celltypist_majority_voting %in% c("DC1"),"celltype"] <-"DC1"
+htap@meta.data[htap@meta.data$integrated_snn_res.4 %in% c(59),"celltype"] <-"DC1"
+htap@meta.data[htap@meta.data$celltypist_majority_voting %in% c("DC2"),"celltype"] <-"DC2"
+htap@meta.data[htap@meta.data$integrated_snn_res.4 %in% c(54),"celltype"] <-"DC2"
+htap@meta.data[htap@meta.data$celltypist_majority_voting %in% c("Plasmacytoid DCs"),"celltype"] <-"pDC"
+htap@meta.data[htap@meta.data$azimuth_finest_level %in% c("Megakaryocytes"),"celltype"] <-"Megak"
+htap@meta.data[htap@meta.data$integrated_snn_res.4 %in% c(56),"celltype"] <-"B"
+htap@meta.data[htap@meta.data$integrated_snn_res.4 %in% c(27,62),"celltype"] <-"MacroATP10A"
+htap@meta.data[htap@meta.data$integrated_snn_res.4 %in% c(31),"celltype"] <-"MacroCD68"
+htap@meta.data[htap@meta.data$azimuth_finest_level %in% c("Alveolar Mφ proliferating"),"celltype"] <-"Macro-prolif"
+
+DimPlot(htap, group.by = "celltype", label = T, repel = T)
+dim(htap)
+#saveRDS(object = htap, paste0(out.dir, "htap.rds"))
+
+```
+
+
+
+```{r fig.width=10}
+DefaultAssay(htap)<-"RNA"
+VlnPlot(htap, group.by = "celltype", features = "CD68")+NoLegend()
+```
+
+
+
+
+```{r fig.width=14, fig.height=10}
+
+Epithelial <- c("Basal","MCC","PNEC","Pre-TB-SC","TRB-SC","AT0","AT2a","AT2b","AT1-AT2","AT1-imm","AT1")
+Endothelial <- c("aCap","gCap","ArtEC","V-PulmEC","V-SysEC","Lymph")
+Immune <- c("MacroATP10A", "MacroCD68","Macro-prolif","DC1","DC2","Mono","Inter-Macro","CD4","CD8","T-prolif","NK","Mast","Plasma","pDC","B","Megak")
+Stroma <- c("AdvFibro","AlvFibro", "MyoFibro","Peri", "ASMC","VSMC")
+htap@meta.data$celltype_order <- factor(htap@meta.data$celltype, levels = c(Endothelial,Stroma,Epithelial,Immune))
+
+
+htap@meta.data$population <- NULL
+htap@meta.data[htap@meta.data$celltype %in% Epithelial, "population"] <-"Epithelial"
+htap@meta.data[htap@meta.data$celltype %in% Endothelial, "population"] <-"Endothelial"
+htap@meta.data[htap@meta.data$celltype %in% Immune, "population"] <-"Immune"
+htap@meta.data[htap@meta.data$celltype %in% Stroma, "population"] <-"Stroma"
+
+DimPlot(obj = htap, group.by = "celltype_order", label = T, repel = T, cols = col.pal$celltype)
+DimPlot(obj = htap, group.by = "population", label = T, repel = T) + NoLegend()
+
+invisible(gc())
+#saveRDS(htap, paste(dir, "sobj/integrated/htap.rds", sep = "/"))
+
+```
+
+
+
+
+# Full name
+
+```{r fig.width=14, fig.height=10}
+# Epithelial
+htap@meta.data$full_name <- NULL
+htap@meta.data[htap@meta.data$integrated_snn_res.4 %in% c(19),"full_name"] <-"AT0: alveolar epithelial type 0"
+htap@meta.data[htap@meta.data$integrated_snn_res.4 %in% c(1,3,4,5,6,8,32),"full_name"] <-"AT2a: alveolar epithelial type 2a"
+htap@meta.data[htap@meta.data$integrated_snn_res.4 %in% c(10,13,15,18,21,29),"full_name"] <-"AT2b: alveolar epithelial type 2b"
+htap@meta.data[htap@meta.data$integrated_snn_res.4 %in% c(26),"full_name"] <-"AT1-AT2"
+htap@meta.data[htap@meta.data$integrated_snn_res.4 %in% c(0,2,7),"full_name"] <-"AT1: alveolar epithelial type 1" # AGER+RTKN2+ (Murthy 2022)
+htap@meta.data[htap@meta.data$integrated_snn_res.4 %in% c(17,24,50),"full_name"] <-"AT1-imm: immature alveolar epithelial type 1" # AGER+RTKN2- (Murthy 2022)
+htap@meta.data[htap@meta.data$integrated_snn_res.4 %in% c(20),"full_name"] <-"MCC: multiciliated cells"
+htap@meta.data[htap@meta.data$integrated_snn_res.4 %in% c(51),"full_name"] <-"Pre-TB-SC: pre-terminal bronchiole secretory cells"
+htap@meta.data[htap@meta.data$integrated_snn_res.4 %in% c(36),"full_name"] <-"TRB-SC: terminal and respiratory bronchiole secretory cells"
+htap@meta.data[htap@meta.data$integrated_snn_res.4 %in% c(52),"full_name"] <-"Basal"
+htap@meta.data[htap@meta.data$azimuth_finest_level %in% c("Basal resting"),"full_name"] <-"Basal"
+htap@meta.data[htap@meta.data$celltypist_majority_voting %in% c("Neuroendocrine"),"full_name"] <-"PNEC: pulmonary neuroendocrine cells"
+
+# Endothelial
+htap@meta.data[htap@meta.data$integrated_snn_res.4 %in% c(39),"full_name"] <-"Lymph: lymphatic endothelial cells"
+htap@meta.data[htap@meta.data$integrated_snn_res.4 %in% c(30,53),"full_name"] <-"V-SysEC: venous systemic endothelial cells"
+htap@meta.data[htap@meta.data$integrated_snn_res.4 %in% c(35,40),"full_name"] <-"V-PulmEC: venous pulmonary endothelial cells"
+htap@meta.data[htap@meta.data$integrated_snn_res.4 %in% c(25,28,34),"full_name"] <-"ArtEC: arterial endothelial cells"
+htap@meta.data[htap@meta.data$integrated_snn_res.4 %in% c(12,38),"full_name"] <-"aCap: aerocyte capillary endothelial cells"
+htap@meta.data[htap@meta.data$integrated_snn_res.4 %in% c(9,11,14,37,57),"full_name"] <-"gCap: general capillary endothelial cells"
+
+# Stromal
+htap@meta.data[htap@meta.data$integrated_snn_res.4 %in% c(23,48),"full_name"] <-"AlvFibro: alveolar fibroblasts"
+htap@meta.data[htap@meta.data$integrated_snn_res.4 %in% c(42,44),"full_name"] <-"AdvFibro: adventitial fibroblasts"
+htap@meta.data[htap@meta.data$integrated_snn_res.4 %in% c(60),"full_name"] <-"MyoFibro: myofibroblasts"
+htap@meta.data[htap@meta.data$integrated_snn_res.4 %in% c(55),"full_name"] <-"Peri: pericytes"
+#htap@meta.data[htap@meta.data$integrated_snn_res.4 %in% c(45),"full_name"] <-"SMC: smooth muscle cells"
+htap@meta.data[htap@meta.data$integrated_snn_res.4 %in% c(45),"full_name"] <-"VSMC: vascular smooth muscle cells"
+htap@meta.data[rownames(htap@meta.data) %in% asm.cells,"full_name"] <-"ASMC: airway smooth muscle cells"
+
+
+# Immune
+htap@meta.data[htap@meta.data$integrated_snn_res.4 %in% c(16,33),"full_name"] <-"CD4: lymphocyte CD4+ T cells"
+htap@meta.data[htap@meta.data$integrated_snn_res.4 %in% c(46,49),"full_name"] <-"CD8: lymphocyte CD8+ T cells"
+htap@meta.data[htap@meta.data$azimuth_finest_level %in% c("T cells proliferating"),"full_name"] <-"T-prolif: lymphocyte T cells proliferating"
+htap@meta.data[htap@meta.data$integrated_snn_res.4 %in% c(22),"full_name"] <-"NK: natural killer cells"
+htap@meta.data[htap@meta.data$integrated_snn_res.4 %in% c(43),"full_name"] <-"Mono: monocytes"
+htap@meta.data[htap@meta.data$integrated_snn_res.4 %in% c(58,61),"full_name"] <-"Plasma"
+htap@meta.data[htap@meta.data$integrated_snn_res.4 %in% c(47),"full_name"] <-"Mast: mastocytes"
+htap@meta.data[htap@meta.data$integrated_snn_res.4 %in% c(41),"full_name"] <-"Inter-Macro: interstitial macrophages"
+htap@meta.data[htap@meta.data$celltypist_majority_voting %in% c("DC1"),"full_name"] <-"DC1: dendritic cells type1"
+htap@meta.data[htap@meta.data$integrated_snn_res.4 %in% c(59),"full_name"] <-"DC1: dendritic cells type1"
+htap@meta.data[htap@meta.data$celltypist_majority_voting %in% c("DC2"),"full_name"] <-"DC2: dendritic cells type2"
+htap@meta.data[htap@meta.data$integrated_snn_res.4 %in% c(54),"full_name"] <-"DC2: dendritic cells type2"
+htap@meta.data[htap@meta.data$celltypist_majority_voting %in% c("Plasmacytoid DCs"),"full_name"] <-"pDC: plasmacytoid dendritic cells"
+htap@meta.data[htap@meta.data$azimuth_finest_level %in% c("Megakaryocytes"),"full_name"] <-"Megak: megakaryocytes"
+htap@meta.data[htap@meta.data$integrated_snn_res.4 %in% c(56),"full_name"] <-"B: lymphocyte B cells"
+htap@meta.data[htap@meta.data$integrated_snn_res.4 %in% c(27,62),"full_name"] <-"MacroATP10A: macrophages ATP10A high"
+htap@meta.data[htap@meta.data$integrated_snn_res.4 %in% c(31),"full_name"] <-"MacroCD68: macrophages CD68 high"
+htap@meta.data[htap@meta.data$azimuth_finest_level %in% c("Alveolar Mφ proliferating"),"full_name"] <-"Macro-prolif: macrophages proliferating"
+
+
+
+Epi <- c("Basal",
+         "MCC: multiciliated cells",
+         "PNEC: pulmonary neuroendocrine cells",
+         "Pre-TB-SC: pre-terminal bronchiole secretory cells",
+         "TRB-SC: terminal and respiratory bronchiole secretory cells",
+         "AT0: alveolar epithelial type 0",
+         "AT2a: alveolar epithelial type 2a",
+         "AT2b: alveolar epithelial type 2b",
+         "AT1-AT2",
+         "AT1-imm: immature alveolar epithelial type 1",
+         "AT1: alveolar epithelial type 1")
+
+Endo <- c("aCap: aerocyte capillary endothelial cells", 
+          "gCap: general capillary endothelial cells",
+          "ArtEC: arterial endothelial cells",
+          "V-PulmEC: venous pulmonary endothelial cells",
+          "V-SysEC: venous systemic endothelial cells",
+          "Lymph: lymphatic endothelial cells")
+
+
+Imm <- c("MacroATP10A: macrophages ATP10A high",
+         "MacroCD68: macrophages CD68 high",
+         "Macro-prolif: macrophages proliferating",
+         "DC1: dendritic cells type1",
+         "DC2: dendritic cells type2",
+         "Mono: monocytes",
+         "Inter-Macro: interstitial macrophages",
+         "CD4: lymphocyte CD4+ T cells",
+         "CD8: lymphocyte CD8+ T cells",
+         "T-prolif: lymphocyte T cells proliferating",
+         "NK: natural killer cells",
+         "Mast: mastocytes",
+         "Plasma",
+         "pDC: plasmacytoid dendritic cells",
+         "B: lymphocyte B cells",
+         "Megak: megakaryocytes")
+
+Stro <- c("AdvFibro: adventitial fibroblasts",
+          "AlvFibro: alveolar fibroblasts",
+          "MyoFibro: myofibroblasts",
+          "Peri: pericytes",
+          "ASMC: airway smooth muscle cells",
+          "VSMC: vascular smooth muscle cells"
+)
+
+htap@meta.data$full_name_order <- factor(htap@meta.data$full_name, levels = c(Endo,Stro,Epi,Imm))
+
+
+DimPlot(obj = htap, group.by = "full_name_order", label = T, repel = T)
+
+```
+
+
+
+# Custom colors
+
+
+```{r fig.width=10, fig.height=8}
+
+# #cartography::carto.pal.info()
+# #cartography::display.carto.all(n = 5)
+# 
+# col.pal <- list()
+# 
+# Epithelial <- c("Basal","MCC","PNEC","Pre-TB-SC","TRB-SC","AT0","AT2a","AT2b","AT1-AT2","AT1-imm","AT1")
+# Endothelial <- c("Lymph","aCap","gCap","ArtEC","V-PulmEC","V-SysEC")
+# Immune <- c("MacroATP10A", "MacroCD68","Macro-prolif","DC1","DC2","Mono","Inter-Macro","CD4","CD8","T-prolif","NK","Mast","Plasma","pDC","B","Megak")
+# Stroma <- c("Peri", "ASMC","VSMC","AdvFibro","AlvFibro", "MyoFibro")
+# 
+# col.pal$sample <- setNames(c("#6E1631", "#8E1C3E", "#BD345E", "#DB5D6C", "#E27D89", "#E99EA7", "#F0BEC4", "#B6D5D9", "#92C1C6", "#6DACB3", "#4998A1", "#297B71","#1B6B61", "#145049"),c("PAH.D510","PAH.D511" ,"PAH.D512", "PAH.D513","PAH.D514", "PAH.D532", "PAH.D533",  "CTRL.D505" ,"CTRL.D506","CTRL.D507", "CTRL.D508", "CTRL.D509",  "CTRL.D530", "CTRL.D531"))
+# 
+# # col.pal$sample <- setNames(c(RColorBrewer::brewer.pal(n = 7, name = "Oranges"), 
+# #                                    rev(RColorBrewer::brewer.pal(n = 7, name = "PuBuGn"))),
+# #                                  c("PAH.D510","PAH.D511" ,"PAH.D512", "PAH.D513","PAH.D514", "PAH.D532", "PAH.D533",  
+# #                                    "CTRL.D505" ,"CTRL.D506","CTRL.D507", "CTRL.D508", "CTRL.D509",  "CTRL.D530", "CTRL.D531"))
+# 
+# col.pal$epi <-  setNames(c(cartography::carto.pal(pal1 = "pink.pal", n1 = 5),
+#                                         cartography::carto.pal(pal1 = "purple.pal", n1 = 6)),Epithelial)
+# col.pal$endo <-  setNames(c(cartography::carto.pal(pal1 = "blue.pal", n1 = 6)),Endothelial)
+# col.pal$stroma <-  setNames(c(cartography::carto.pal(pal1 = "wine.pal", n1 = 6)),Stroma)
+# col.pal$imm <-  setNames(c(cartography::carto.pal(pal1 = "green.pal", n1 = 7),
+#                                            cartography::carto.pal(pal1 = "kaki.pal", n1 = 4),
+#                                            cartography::carto.pal(pal1 = "brown.pal", n1 = 5)),Immune)
+# col.pal$celltype <- c(col.pal$epi, col.pal$endo, col.pal$imm,col.pal$stroma)
+# col.pal$population <- setNames(c("#0077b6","#5e548e","#606c38", "#bb3e03"), c("Endothelial","Epithelial","Immune","Stroma"))
+# col.pal$group <- setNames(c("#006E82","#AA0A3C"), c("CTRL", "PAH"))
+# 
+# #saveRDS(col.pal, paste0(out.dir,"col.pal.rds"))
+
+
+col.pal <- list()
+col.pal$endo <- setNames(
+  c("#00bbf9","#0466c8","#6096ba","#657ed4","#abc4ff","#124e78"),
+  c("aCap", "gCap", "ArtEC", "V-PulmEC", "V-SysEC","Lymph")
+)
+
+col.pal$epi <- setNames(
+  c("#7209b7","#b5179e","#d0d1ff","#480ca8","#9d4edd","#e0aaff","#6a4c93","#7678ed","#a5668b","#a6808c","#4d194d"),
+  c("Basal","MCC", "PNEC","Pre-TB-SC","TRB-SC","AT0", "AT2a","AT2b","AT1-AT2","AT1-imm","AT1")
+)
+
+col.pal$stroma <- setNames(c("#ef6351","#d58936","#69140e","#fbc3bc","#9c6644","#d81159"),
+                           c("AdvFibro","AlvFibro","MyoFibro","ASMC","Peri","VSMC"))
+
+col.pal$imm <- setNames(c("#006466","#ffd29d","#60d394","#d6ce93","#758e4f","#b1cc74","#38b000","#7c6a0a","#bcbd8b","#80ffdb","#e8fcc2","#4f6d7a","#829399","#25ced1","#fffbbd","#006400"),
+                        c("MacroATP10A","MacroCD68","Macro-prolif","DC1","DC2","Mono","Inter-Macro","CD4","CD8","T-prolif","NK","Mast","Plasma","pDC","B","Megak"))
+
+
+col.pal$celltype <- c(col.pal$epi, col.pal$endo, col.pal$stroma, col.pal$imm)
+col.pal$population <- setNames(c("#0077b6","#5e548e","#606c38", "#bb3e03"), c("Endothelial","Epithelial","Immune","Stroma"))
+col.pal$group <- setNames(c("#006E82","#AA0A3C"), c("CTRL", "PAH"))
+col.pal$sample <- setNames(c("#6E1631", "#8E1C3E", "#BD345E", "#DB5D6C", "#E27D89", "#E99EA7", "#F0BEC4", "#B6D5D9", "#92C1C6", "#6DACB3", "#4998A1", "#297B71","#1B6B61", "#145049"),c("PAH.D510","PAH.D511" ,"PAH.D512", "PAH.D513","PAH.D514", "PAH.D532", "PAH.D533",  "CTRL.D505" ,"CTRL.D506","CTRL.D507", "CTRL.D508", "CTRL.D509",  "CTRL.D530", "CTRL.D531"))
+
+saveRDS(col.pal, paste0(main.dir, "github/002_data_objects/col.pal.rds"))
+
+col.pal <- readRDS(paste0(main.dir, "github/002_data_objects/col.pal.rds"))
+
+
+DimPlot(obj = htap, group.by = "celltype_order", label = T, repel = T, cols = col.pal$celltype)
+DimPlot(obj = htap, group.by = "population", label = T, repel = T, cols = col.pal$population)
+DimPlot(obj = htap, group.by = "group", label = T, repel = T, cols = col.pal$group)
+DimPlot(obj = htap, group.by = "sample", label = F, cols = col.pal$sample)
+
+```
+
+
+
+
+```{r fig.width=10, fig.height=7,message=F, warning=F}
+
+Dim_Plot(obj = htap, 
+         group.by = "celltype_order", 
+         cell.name = "full_name_order",
+         colors.use = col.pal$celltype,
+         pt.size = 0.01,
+         figure.plot = T, 
+         legend = T,
+         theme.bw = F, 
+         label.show = T)
+
+```
+
+
+
+
+# Save data
+
+```{r}
+
+saveRDS(htap, paste0(out.dir, "002_data_objects/htap.rds"))
+
+```
+
+
+# Session info
+
+```{r session_info} 
+
+utils::capture.output(devtools::session_info())
+
+```

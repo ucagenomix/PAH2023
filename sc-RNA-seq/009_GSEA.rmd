@@ -1,0 +1,862 @@
+---
+title: "10x PAH NucSeq - Gen Set Enrichment Analysis"
+author: '[Yvon Mbouamboua](mbouamboua@ipmc.cnrs.fr)'
+output:
+  html_document: default
+  html_notebook: default
+date: 'Compiled: `r Sys.Date()`'
+---
+
+# Setting parameters
+
+```{r setup, include=T, warning=FALSE}
+
+options(future.globals.maxSize = 80000*1024^2)
+main.dir <- "/data/data_mbouamboua/projects/10x_htap_nucseq/"
+out.dir <- paste0(main.dir, "004_outs/GSEA/")
+if(!dir.exists(out.dir)){dir.create(file.path(out.dir), recursive = T, showWarnings = F)}
+set.seed(4743)
+
+```
+
+# Require R packages and functions
+
+
+```{r warning=F, message=F}
+
+source("/data/data_mbouamboua/apps/Rpkgs/Rpkgs.R")
+source("/data/data_mbouamboua/tools/utilities.R")
+source("/data/data_mbouamboua/tools/visualization.R")
+source("/data/data_mbouamboua/tools/differential_expression.R")
+set.seed(4743)
+
+```
+
+
+
+# Define function
+
+```{r fig.width=8, fig.height=8}
+
+# Adapted from: https://github.com/xmc811/Scillus/blob/master/R/visualization.R
+
+Get_GO <- function(markers, 
+                   #cluster_name = NULL, 
+                   topn = 100, 
+                   org = "human", 
+                   ont = "BP", 
+                   category,
+                   out.dir,
+                   out.name,...) {
+  
+  pkg_name <- ifelse(org == "human", "org.Hs.eg.db", "org.Mm.eg.db")
+  
+  if (!requireNamespace(pkg_name, quietly = TRUE)) {
+    stop(paste("Package", pkg_name, "needed for this function to work. Please install it."),
+         call. = FALSE)
+  }
+  
+  if (!requireNamespace("clusterProfiler", quietly = TRUE)) {
+    stop(paste("Package \"clusterProfiler\" needed for this function to work. Please install it."),
+         call. = FALSE)
+  }
+  
+  
+  joined <- data.frame()
+  cluster_names <- as.vector(unique(markers$cluster))
+  
+  for(i in 1:length(cluster_names)){
+    cluster_name <- cluster_names[i]
+    
+    gene_list <- markers %>% 
+      filter(.data$cluster == cluster_name) %>% 
+      arrange(.data$p_val_adj) %>% 
+      head(topn) %>% 
+      pull(.data$gene)
+    
+    db <- if(org == "human") org.Hs.eg.db::org.Hs.eg.db else org.Mm.eg.db::org.Mm.eg.db
+    
+    res <- clusterProfiler::enrichGO(gene = gene_list, 
+                                     OrgDb = db, 
+                                     ont = ont,
+                                     keyType = "SYMBOL", ...)
+    
+    dir <- paste(out.dir, ont, out.name, "/", sep = "/")
+    if(!dir.exists(dir)){
+      dir.create(file.path(dir), recursive = TRUE, showWarnings = FALSE)
+    }
+    
+    res@result$cluster_name <- replicate(nrow(res@result),paste(cluster_name))
+    saveRDS(res, paste(dir, cluster_name, "_GO_", ont, ".rds", sep = ""))
+    
+    df <- res@result
+    df$cluster_name <- replicate(nrow(df),paste(cluster_name))
+    rownames(df) <- c()
+    joined <- rbind(joined, df)
+
+    df <- as_tibble(res@result) %>% 
+      arrange(.data$p.adjust) %>% 
+      head(category) %>% 
+      mutate(cluster = cluster_name) %>% 
+      mutate(Description = stringr::str_to_title(.data$Description)) %>% 
+      mutate(Description = fct_reorder(.data$Description, dplyr::desc(.data$p.adjust)))
+    
+      #df <- df[grep("^Epithel", df$Description, invert = TRUE),]
+      #df <- df %>% dplyr::filter(!grepl('^epithel', Description))
+      
+    ggplot(df, mapping = aes(x = .data$Description, y = -log10(.data$p.adjust))) + 
+      geom_bar(aes(fill = .data$Count), 
+               stat = "identity") + 
+      scale_fill_gradientn("Gene Count", 
+                           colours = colorspace::diverge_hcl(7), 
+                           guide = "colourbar") +
+      coord_flip() + 
+      #geom_hline(yintercept = -log10(0.05), linetype = "dashed") + 
+      xlab("Gene Ontology") + 
+      ylab(bquote("-log"[10] ~ " adjusted p-value")) +
+      theme_bw() +
+      theme(axis.text = element_text(size = 8, color = "black"),
+            axis.title = element_text(size = 10, color = "black"),
+            legend.title=element_text(size = 8, color = "black")) +
+      ggtitle(cluster_name)
+    
+    saveRDS(res, paste(dir, cluster_name, "_GO_", ont, ".rds", sep = ""))
+    
+    ggsave(paste(dir, cluster_name, "_GO_", ont, ".pdf", sep = ""), width = 8, height = 8)
+    
+  }
+  
+  write.table(joined, file = paste(dir, "all_res_GO_", ont, ".tsv", sep = ""),
+              sep = "\t", quote = F, row.names = F, col.names = T)
+  
+}
+
+```
+
+
+# All celltypes
+
+```{r fig.width=2.5, fig.height=4}
+
+markers <- read.delim(paste0(main.dir, "004_outs/005_DE_markers/celltype_markers.tsv"), sep = "\t")
+markers <- markers %>% dplyr::filter(p_val_adj <= 0.05, avg_log2FC > 0)
+
+Get_GO(markers = markers, 
+                topn = 10000, 
+                category = 50, 
+                org = "human", 
+                ont = "BP", 
+                out.dir = out.dir,
+                out.name = "GSEA_NucSeq")
+
+```
+
+
+
+# Epithelial cells
+## Get gene markers
+
+
+
+## Get GO BP
+```{r fig.width=2.5, fig.height=4}
+
+markers <- read.delim(paste0(main.dir, "004_outs/005_DE_markers/epi_markers.tsv"), sep = "\t")
+markers <- markers %>% dplyr::filter(p_val_adj <= 0.05, avg_log2FC > 0)
+
+## GO BP
+Get_GO(markers = markers, 
+                topn = 10000, 
+                category = 50, 
+                org = "human", 
+                ont = "BP", 
+                out.dir = out.dir,
+                out.name = "Epithelial")
+
+```
+
+
+ 
+
+
+# Endothelial cells
+
+## Get gene markers
+
+```{r fig.width=2.5, fig.height=11}
+
+invisible(gc())
+sobj <- readRDS(paste0(main.dir, "github/002_data_objects/endothelial.rds"))
+markers <- Get_Markers(obj = sobj, group.by = "celltype", test_use = "wilcox",only.pos = F)
+head(markers)
+write.table(markers, paste(out.dir, "endo_markers.tsv", sep = "/"), sep = "\t", row.names = FALSE, quote = FALSE, col.names = TRUE)
+# top <- markers %>% group_by(cluster) %>% top_n(n = 20, wt = avg_log2FC)
+# Idents(sobj) <- "celltype"
+# Dot_Plot(sobj = sobj, features = rev(top$gene), x.lab.rotate = T, flip.axes = T, base.size = 10, theme.bw = T)
+# ggsave(paste(out.dir, "endo_markers.png", sep = "/"), width = 2.5, height = 11)
+
+```
+
+
+## Get GO BP without negative genes
+
+```{r fig.width=2.5, fig.height=4}
+
+markers <- read.delim(paste(out.dir, "endo_markers.tsv", sep = "/"), sep = "\t")
+markers <- markers %>% dplyr::filter(p_val_adj <= 0.05, avg_log2FC > 0)
+
+Get_GO(markers = markers, 
+                topn = 10000, 
+                category = 50, 
+                org = "human", 
+                ont = "BP", 
+                out.dir = out.dir,
+                out.name = "Endothelial")
+
+```
+
+
+## Get GO BP with negative genes
+
+```{r fig.width=2.5, fig.height=4}
+
+markers <- read.delim(paste0(out.dir, "endo_markers.tsv"), sep = "\t")
+markers <- markers %>% dplyr::filter(p_val_adj <= 0.05)
+
+Get_GO(markers = markers, topn = 10000,  category = 50,  org = "human", 
+       ont = "BP",  out.dir = out.dir, out.name = "Endothelial_v2")
+
+```
+
+
+## Score and preranked 
+
+```{r}
+
+
+# GO_BP <- readRDS(paste(outdir,  "GO_BP.rds", sep = "/"))
+# GO_BP@result$Description <- factor(gsub("/", " or ", GO_BP_ALK1_High_BMP9_vs_ALK1_High@result$Description))
+# terms <- c("negative regulation of pathway-restricted SMAD protein phosphorylation", "blood vessel remodeling", "negative regulation of angiogenesis", "blood circulation", "regulation of cell growth", "regulation of blood pressure", "positive regulation of cell differentiation", "negative regulation of vasculature development" , "endothelial cell differentiation", "regulation of cell death")
+# GO_BP <- dplyr::filter(GO_BP, Description %in% terms)
+
+
+obj.list <- list()
+files = list.files(path = paste0(out.dir, "BP/Endothelial_v2/"), pattern = '.rds', full.names = T, recursive = F)
+obj.list = lapply(files, function (x) readRDS(x))
+
+
+for (i in 1:length(obj.list)) {
+  
+  cluster_name <- unique(obj.list[[i]]@result$cluster_name)
+  dir <- paste0(out.dir, "gsea_preranked/", cluster_name, "/", sep = "")
+  if(!dir.exists(dir)){dir.create(file.path(dir), recursive = T, showWarnings = F)}
+
+  for(i in 1:length(obj.list[[i]]@result$ID)){
+    enrichplot::gseaplot2(obj.list[[i]],  geneSetID = i,  base_size = 8,
+                          title = obj.list[[i]]@result$Description[[i]]) +
+      theme(axis.text.y = element_text(color = "black", size = 8),
+            axis.text.x = element_text(color = "black", size = 8),
+            axis.title = element_text(color = "black", size = 8))
+    
+    ggsave(paste0(dir, obj.list[[i]]@result$Description[[i]], ".pdf", sep = ""))
+    
+  }
+}
+
+
+enrichplot::gseaplot2(obj.list[[1]]@result,  geneSetID = 1,  base_size = 8,
+                          title = obj.list[[1]]@result$Description[[1]]) +
+      theme(axis.text.y = element_text(color = "black", size = 8),
+            axis.text.x = element_text(color = "black", size = 8),
+            axis.title = element_text(color = "black", size = 8))
+
+
+```
+
+
+
+# Stromal cells
+
+```{r fig.width=2.5, fig.height=4}
+
+markers <- read.delim(paste0(main.dir, "004_outs/005_DE_markers/stromal_markers.tsv"), sep = "\t")
+markers <- markers %>% dplyr::filter(p_val_adj <= 0.05, avg_log2FC > 0)
+
+Get_GO(markers = markers, 
+                topn = 10000, 
+                category = 50, 
+                org = "human", 
+                ont = "BP", 
+                out.dir = out.dir,
+                out.name = "Stromal")
+
+```
+
+
+# Immune cells
+
+```{r fig.width=2.5, fig.height=4}
+
+# markers <- read.delim(paste0(main.dir, "004_outs/005_DE_markers/imm_markers.tsv"), sep = "\t")
+# markers <- markers %>% dplyr::filter(p_val_adj <= 0.05, avg_log2FC > 0)
+# 
+# Get_GO(markers = markers, 
+#                 topn = 10000, 
+#                 category = 50, 
+#                 org = "human", 
+#                 ont = "BP", 
+#                 out.dir = out.dir,
+#                 out.name = "Immune")
+
+```
+
+# Merge GO BP results
+
+```{r}
+
+Epi_GO_BP <- read.delim(paste0(main.dir, "github/GSEA/BP/Epithelial/all_res_GO_BP.tsv"), sep = "\t")
+Epi_GO_BP$population <- rep("Epithelial", nrow(Epi_GO_BP))
+
+Endo_GO_BP <- read.delim(paste0(main.dir, "github/GSEA/BP/Endothelial/all_res_GO_BP.tsv"), sep = "\t")
+Endo_GO_BP$population <- rep("Endothelial", nrow(Endo_GO_BP))
+
+Stroma_GO_BP <- read.delim(paste0(main.dir, "github/GSEA/BP/Stromal/all_res_GO_BP.tsv"), sep = "\t")
+Stroma_GO_BP$population <- rep("Stromal", nrow(Stroma_GO_BP))
+
+Imm_GO_BP <- read.delim(paste0(main.dir, "github/GSEA/BP/Immune/all_res_GO_BP.tsv"), sep = "\t")
+Imm_GO_BP$population <- rep("Endothelial", nrow(Imm_GO_BP))
+
+GO_PB <- rbind(Epi_GO_BP,Endo_GO_BP,Stroma_GO_BP,Imm_GO_BP)
+
+write.table(GO_PB,file=paste0(main.dir, "github/GSEA/BP/GO_PB.tsv"),sep="\t",quote=F,row.names=T)
+
+```
+
+
+
+# Biological theme comparison
+
+```{r}
+
+data(gcSample)
+str(gcSample) 
+ck <- compareCluster(geneCluster = gcSample, fun = enrichKEGG)
+ck <- setReadable(ck, OrgDb = org.Hs.eg.db, keyType="ENTREZID")
+head(ck) 
+
+```
+
+```{r}
+
+data(geneList, package="DOSE")
+gene <- names(geneList)[abs(geneList) > 2]
+# Entrez gene ID
+head(gene)
+
+
+mydf <- data.frame(Entrez=names(geneList), FC=geneList)
+mydf <- mydf[abs(mydf$FC) > 1,]
+mydf$group <- "upregulated"
+mydf$group[mydf$FC < 0] <- "downregulated"
+
+mydf$othergroup <- "A"
+mydf$othergroup[abs(mydf$FC) > 2] <- "B"
+
+formula_res <- compareCluster(Entrez~group, data=mydf, fun="enrichKEGG")
+  
+```
+
+
+
+# Plot some GO terms
+## aCap
+
+```{r fig.width=7.3, fig.height=1.8}
+
+res <- readRDS("/data/data_mbouamboua/projects/10x_htap_nucseq/004_outs/GSEA/BP/Endothelial/aCap_GO_BP.rds")
+ids <- c("GO:0045766","GO:0071560","GO:2000351","GO:0034614","GO:0000302")
+df <- subset(res@result, ID %in% ids)
+
+df <- as_tibble(df) %>% 
+  arrange(.data$p.adjust) %>% 
+  mutate(Description = stringr::str_to_title(.data$Description)) %>% 
+  mutate(Description = fct_reorder(.data$Description, dplyr::desc(.data$p.adjust)))
+
+ggplot(df, mapping = aes(x = .data$Description, y = -log10(.data$p.adjust))) + 
+  geom_bar(stat = "identity", fill = "#208799") + 
+          coord_flip() + labs(title = "aCap", x ="") + theme_classic() +
+  ylab(bquote("-log10(adj.P-val)")) +
+  theme(axis.text = element_text(size = 14, color = "black"),
+        plot.title = element_text(size = 14, face = "bold"),
+        axis.title.x = element_text(size = 12, color = "black"),
+        axis.title.y  = element_text(size = 12, color = "black", face = "bold"),
+        legend.title = element_text(size = 8),
+        legend.text = element_text(size = 8, color = "black"),
+        legend.key.height = unit(0.3, 'cm'),
+        legend.key.width = unit(0.3, 'cm')) 
+
+ggsave(paste0(out.dir, "aCap_top_5_go_bp.pdf"), useDingbats = F, width = 7.3, height = 1.8,  dpi = 320)
+
+```
+
+
+## gCap
+
+```{r fig.width=6.3, fig.height=1.8}
+
+res <- readRDS("/data/data_mbouamboua/projects/10x_htap_nucseq/004_outs/GSEA/BP/Endothelial/gCap_GO_BP.rds")
+ids <- c("GO:0003018","GO:0045446","GO:0071559","GO:2001236","GO:0030510")
+df <- subset(res@result, ID %in% ids)
+
+df <- as_tibble(df) %>% 
+  arrange(.data$p.adjust) %>% 
+  mutate(Description = stringr::str_to_title(.data$Description)) %>% 
+  mutate(Description = fct_reorder(.data$Description, dplyr::desc(.data$p.adjust)))
+
+ggplot(df, mapping = aes(x = .data$Description, y = -log10(.data$p.adjust))) + 
+  geom_bar(stat = "identity", fill = "#208799") + 
+          coord_flip() + labs(title = "gCap", x ="") + theme_classic() +
+  ylab(bquote("-log10(adj.P-val)")) +
+  theme(axis.text = element_text(size = 14, color = "black"),
+        plot.title = element_text(size = 14, face = "bold"),
+        axis.title.x = element_text(size = 12, color = "black"),
+        axis.title.y  = element_text(size = 12, color = "black", face = "bold"),
+        legend.title = element_text(size = 8),
+        legend.text = element_text(size = 8, color = "black"),
+        legend.key.height = unit(0.3, 'cm'),
+        legend.key.width = unit(0.3, 'cm')) 
+
+ggsave(paste0(out.dir, "gCap_top_5_go_bp.pdf"), useDingbats = F, width = 6.3, height = 1.8,  dpi = 320)
+
+```
+
+
+## VSMC
+
+```{r fig.width=6.5, fig.height=1.8}
+
+res <- readRDS("/data/data_mbouamboua/projects/10x_htap_nucseq/004_outs/GSEA/BP/Stromal/VSMC_GO_BP.rds")
+ids <- c("GO:0006937","GO:1990874","GO:0014912","GO:0071559","GO:0001974")
+df <- subset(res@result, ID %in% ids)
+
+df <- as_tibble(df) %>% 
+  arrange(.data$p.adjust) %>% 
+  mutate(Description = stringr::str_to_title(.data$Description)) %>% 
+  mutate(Description = fct_reorder(.data$Description, dplyr::desc(.data$p.adjust)))
+
+ggplot(df, mapping = aes(x = .data$Description, y = -log10(.data$p.adjust))) + 
+  geom_bar(stat = "identity", fill = "#208799") + 
+            coord_flip() + labs(title = "VSMC", x ="") + theme_classic() +
+  ylab(bquote("-log10(adj.P-val)")) +
+  theme(axis.text = element_text(size = 14, color = "black"),
+        plot.title = element_text(size = 14, face = "bold"),
+        axis.title.x = element_text(size = 12, color = "black"),
+        axis.title.y  = element_text(size = 12, color = "black", face = "bold"),
+        legend.title = element_text(size = 8),
+        legend.text = element_text(size = 8, color = "black"),
+        legend.key.height = unit(0.3, 'cm'),
+        legend.key.width = unit(0.3, 'cm')) 
+
+ggsave(paste0(out.dir, "VSMC_top_5_go_bp.pdf"), useDingbats = F, width = 6.5, height = 1.8,  dpi = 320)
+
+```
+
+
+## Peri
+
+```{r fig.width=6, fig.height=1.8}
+
+res <- readRDS("/data/data_mbouamboua/projects/10x_htap_nucseq/004_outs/GSEA/BP/Stromal/Peri_GO_BP.rds")
+ids <- c("GO:0016358","GO:0043542","GO:0045446","GO:0071559","GO:0002690")
+df <- subset(res@result, ID %in% ids)
+
+df <- as_tibble(df) %>% 
+  arrange(.data$p.adjust) %>% 
+  mutate(Description = stringr::str_to_title(.data$Description)) %>% 
+  mutate(Description = fct_reorder(.data$Description, dplyr::desc(.data$p.adjust)))
+
+ggplot(df, mapping = aes(x = .data$Description, y = -log10(.data$p.adjust))) + 
+  geom_bar(stat = "identity", fill = "#208799") + 
+          coord_flip() + labs(title = "Peri", x ="") + theme_classic() +
+  ylab(bquote("-log10(adj.P-val)")) +
+  theme(axis.text = element_text(size = 14, color = "black"),
+        plot.title = element_text(size = 14, face = "bold"),
+        axis.title.x = element_text(size = 12, color = "black"),
+        axis.title.y  = element_text(size = 12, color = "black", face = "bold"),
+        legend.title = element_text(size = 8),
+        legend.text = element_text(size = 8, color = "black"),
+        legend.key.height = unit(0.3, 'cm'),
+        legend.key.width = unit(0.3, 'cm')) 
+
+ggsave(paste0(out.dir, "Peri_top_5_go_bp.pdf"), useDingbats = F, width = 6, height = 1.8,  dpi = 320)
+
+```
+
+
+## AdvFibro
+
+```{r fig.width=7, fig.height=1.8}
+
+res <- readRDS("/data/data_mbouamboua/projects/10x_htap_nucseq/004_outs/GSEA/BP/Endothelial/aCap_GO_BP.rds")
+ids <- c("GO:0030198","GO:0071560","GO:0048146","GO:0071773","GO:2001234")
+df <- subset(res@result, ID %in% ids)
+
+df <- as_tibble(df) %>% 
+  arrange(.data$p.adjust) %>% 
+  mutate(Description = stringr::str_to_title(.data$Description)) %>% 
+  mutate(Description = fct_reorder(.data$Description, dplyr::desc(.data$p.adjust)))
+
+ggplot(df, mapping = aes(x = .data$Description, y = -log10(.data$p.adjust))) + 
+  geom_bar(stat = "identity", fill = "#208799") + 
+        coord_flip() + labs(title = "AdvFibro", x ="") + theme_classic() +
+  ylab(bquote("-log10(adj.P-val)")) +
+  theme(axis.text = element_text(size = 14, color = "black"),
+        plot.title = element_text(size = 14, face = "bold"),
+        axis.title.x = element_text(size = 12, color = "black"),
+        axis.title.y  = element_text(size = 12, color = "black", face = "bold"),
+        legend.title = element_text(size = 8),
+        legend.text = element_text(size = 8, color = "black"),
+        legend.key.height = unit(0.3, 'cm'),
+        legend.key.width = unit(0.3, 'cm')) 
+
+ggsave(paste0(out.dir, "AdvFibro_top_5_go_bp.pdf"), useDingbats = F, width = 7, height = 1.8,  dpi = 320)
+
+```
+
+
+## AlvFibro
+
+```{r fig.width=6.5, fig.height=1.8}
+
+res <- readRDS("/data/data_mbouamboua/projects/10x_htap_nucseq/004_outs/GSEA/BP/Endothelial/gCap_GO_BP.rds")
+ids <- c("GO:0060485","GO:0071453","GO:0036293","GO:0070099","GO:0014910")
+df <- subset(res@result, ID %in% ids)
+
+df <- as_tibble(df) %>% 
+  arrange(.data$p.adjust) %>% 
+  mutate(Description = stringr::str_to_title(.data$Description)) %>% 
+  mutate(Description = fct_reorder(.data$Description, dplyr::desc(.data$p.adjust)))
+
+ggplot(df, mapping = aes(x = .data$Description, y = -log10(.data$p.adjust))) + 
+  geom_bar(stat = "identity", fill = "#208799") + 
+      coord_flip() + labs(title = "AlvFibro", x ="") + theme_classic() +
+  ylab(bquote("-log10(adj.P-val)")) +
+  theme(axis.text = element_text(size = 14, color = "black"),
+        plot.title = element_text(size = 14, face = "bold"),
+        axis.title.x = element_text(size = 12, color = "black"),
+        axis.title.y  = element_text(size = 12, color = "black", face = "bold"),
+        legend.title = element_text(size = 8),
+        legend.text = element_text(size = 8, color = "black"),
+        legend.key.height = unit(0.3, 'cm'),
+        legend.key.width = unit(0.3, 'cm')) 
+
+ggsave(paste0(out.dir, "AlvFibro_top_5_go_bp.pdf"), useDingbats = F, width = 7, height = 1.8,  dpi = 320)
+
+
+```
+
+## MacroATP10A
+
+```{r fig.width=6, fig.height=1.8}
+
+res <- readRDS("/data/data_mbouamboua/projects/10x_htap_nucseq/004_outs/GSEA/BP/Immune/AM1_GO_BP.rds")
+ids <- c("GO:0030258","GO:0006869","GO:0048771","GO:0006979","GO:0071559")
+df <- subset(res@result, ID %in% ids)
+
+df <- as_tibble(df) %>% 
+  arrange(.data$p.adjust) %>% 
+  mutate(Description = stringr::str_to_title(.data$Description)) %>% 
+  mutate(Description = fct_reorder(.data$Description, dplyr::desc(.data$p.adjust)))
+
+ggplot(df, mapping = aes(x = .data$Description, y = -log10(.data$p.adjust))) + 
+  geom_bar(stat = "identity", fill = "#208799") + 
+    coord_flip() + labs(title = "MacroATP10A", x ="") + theme_classic() +
+  ylab(bquote("-log10(adj.P-val)")) +
+  theme(axis.text = element_text(size = 14, color = "black"),
+        plot.title = element_text(size = 14, face = "bold"),
+        axis.title.x = element_text(size = 12, color = "black"),
+        axis.title.y  = element_text(size = 12, color = "black", face = "bold"),
+        legend.title = element_text(size = 8),
+        legend.text = element_text(size = 8, color = "black"),
+        legend.key.height = unit(0.3, 'cm'),
+        legend.key.width = unit(0.3, 'cm')) 
+
+ggsave(paste0(out.dir, "MacroATP10A_top_5_go_bp.pdf"), useDingbats = F, width = 6, height = 1.8,  dpi = 320)
+
+```
+
+
+
+## MacroCD68
+
+```{r fig.width=6, fig.height=1.8}
+
+res <- readRDS("/data/data_mbouamboua/projects/10x_htap_nucseq/004_outs/GSEA/BP/Immune/AM2_GO_BP.rds")
+ids <- c("GO:0016358","GO:0001819","GO:0045454","GO:0001974","GO:0002367")
+df <- subset(res@result, ID %in% ids)
+
+df <- as_tibble(df) %>% 
+  arrange(.data$p.adjust) %>% 
+  mutate(Description = stringr::str_to_title(.data$Description)) %>% 
+  mutate(Description = fct_reorder(.data$Description, dplyr::desc(.data$p.adjust)))
+
+ggplot(df, mapping = aes(x = .data$Description, y = -log10(.data$p.adjust))) + 
+  geom_bar(stat = "identity", fill = "#208799") + 
+  coord_flip() + labs(title = "MacroCD68", x ="") + theme_classic() +
+  ylab(bquote("-log10(adj.P-val)")) +
+  theme(axis.text = element_text(size = 14, color = "black"),
+        plot.title = element_text(size = 14, face = "bold"),
+        axis.title.x = element_text(size = 12, color = "black"),
+        axis.title.y  = element_text(size = 12, color = "black", face = "bold"),
+        legend.title = element_text(size = 8),
+        legend.text = element_text(size = 8, color = "black"),
+        legend.key.height = unit(0.3, 'cm'),
+        legend.key.width = unit(0.3, 'cm')) 
+
+ggsave(paste0(out.dir, "MacroCD68_top_5_go_bp.pdf"), useDingbats = F, width = 6, height = 1.8,  dpi = 320)
+
+```
+# Top 30 GO BP
+
+## aCap
+
+```{r fig.width=8, fig.height=8}
+
+res <- readRDS("/data/data_mbouamboua/projects/10x_htap_nucseq/004_outs/GSEA/BP/Endothelial/aCap_GO_BP.rds")
+sub <- subset(TOP_30_GO_BP,  cluster_name == "aCap")
+df <- subset(res@result, ID %in% sub$ID)
+
+df <- as_tibble(df) %>% 
+  arrange(.data$p.adjust) %>% 
+  mutate(Description = stringr::str_to_title(.data$Description)) %>% 
+  mutate(Description = fct_reorder(.data$Description, dplyr::desc(.data$p.adjust)))
+
+ggplot(df, mapping = aes(x = .data$Description, y = -log10(.data$p.adjust))) + 
+  geom_bar(aes(fill = .data$Count), stat = "identity") + 
+  scale_fill_gradient("Gene Count", low = "grey", high = "brown") +
+  coord_flip() + labs(title = "aCap", x ="") + theme_classic() +
+  ylab(bquote("-log10(adj.P-val)")) +
+  theme(axis.text = element_text(size = 14, color = "black"),
+        plot.title = element_text(size = 14, face = "bold"),
+        axis.title.x = element_text(size = 12, color = "black"),
+        axis.title.y  = element_text(size = 12, color = "black", face = "bold"),
+        legend.title = element_text(size = 8),
+        legend.text = element_text(size = 8, color = "black"),
+        legend.position = c(0.5, 0.09),
+        legend.key.height = unit(0.3, 'cm'),
+        legend.key.width = unit(0.3, 'cm')) 
+
+ggsave(paste0(out.dir, "aCap_top_30_go_bp.pdf"), useDingbats = F, width = 8, height = 8,  dpi = 320)
+
+
+```
+
+
+## gCap
+
+```{r fig.width=8, fig.height=8}
+
+res <- readRDS("/data/data_mbouamboua/projects/10x_htap_nucseq/004_outs/GSEA/BP/Endothelial/gCap_GO_BP.rds")
+sub <- subset(TOP_30_GO_BP,  cluster_name == "gCap")
+df <- subset(res@result, ID %in% sub$ID)
+
+df <- as_tibble(df) %>% 
+  arrange(.data$p.adjust) %>% 
+  mutate(Description = stringr::str_to_title(.data$Description)) %>% 
+  mutate(Description = fct_reorder(.data$Description, dplyr::desc(.data$p.adjust)))
+
+ggplot(df, mapping = aes(x = .data$Description, y = -log10(.data$p.adjust))) + 
+  geom_bar(aes(fill = .data$Count), stat = "identity") + 
+  scale_fill_gradient("Gene Count", low = "grey", high = "brown") +
+  coord_flip() + labs(title = "gCap", x ="") + theme_classic() +
+  ylab(bquote("-log10(adj.P-val)")) +
+  theme(axis.text = element_text(size = 14, color = "black"),
+        plot.title = element_text(size = 14, face = "bold"),
+        axis.title.x = element_text(size = 12, color = "black"),
+        axis.title.y  = element_text(size = 12, color = "black", face = "bold"),
+        legend.title = element_text(size = 8),
+        legend.text = element_text(size = 8, color = "black"),
+        legend.position = c(0.5, 0.09),
+        legend.key.height = unit(0.3, 'cm'),
+        legend.key.width = unit(0.3, 'cm')) 
+
+ggsave(paste0(out.dir, "gCap_top_30_go_bp.pdf"), useDingbats = F, width = 8, height = 8,  dpi = 320)
+
+
+```
+
+
+
+## gCap
+
+```{r fig.width=8, fig.height=8}
+
+res <- readRDS("/data/data_mbouamboua/projects/10x_htap_nucseq/004_outs/GSEA/BP/Stromal/AlvFibro_GO_BP.rds")
+sub <- subset(TOP_30_GO_BP,  cluster_name == "AlvFibro")
+df <- subset(res@result, ID %in% sub$ID)
+
+df <- as_tibble(df) %>% 
+  arrange(.data$p.adjust) %>% 
+  mutate(Description = stringr::str_to_title(.data$Description)) %>% 
+  mutate(Description = fct_reorder(.data$Description, dplyr::desc(.data$p.adjust)))
+
+ggplot(df, mapping = aes(x = .data$Description, y = -log10(.data$p.adjust))) + 
+  geom_bar(aes(fill = .data$Count), stat = "identity") + 
+  scale_fill_gradient("Gene Count", low = "grey", high = "brown") +
+  coord_flip() + labs(title = "AlvFibro", x ="") + theme_classic() +
+  ylab(bquote("-log10(adj.P-val)")) +
+  theme(axis.text = element_text(size = 14, color = "black"),
+        plot.title = element_text(size = 14, face = "bold"),
+        axis.title.x = element_text(size = 12, color = "black"),
+        axis.title.y  = element_text(size = 12, color = "black", face = "bold"),
+        legend.title = element_text(size = 8),
+        legend.text = element_text(size = 8, color = "black"),
+        legend.position = c(0.5, 0.09),
+        legend.key.height = unit(0.3, 'cm'),
+        legend.key.width = unit(0.3, 'cm')) 
+
+ggsave(paste0(out.dir, "AlvFibro_top_30_go_bp.pdf"), useDingbats = F, width = 8, height = 8,  dpi = 320)
+
+
+```
+
+
+
+## AdvFibro
+
+```{r fig.width=9, fig.height=8}
+
+res <- readRDS("/data/data_mbouamboua/projects/10x_htap_nucseq/004_outs/GSEA/BP/Stromal/AdvFibro_GO_BP.rds")
+sub <- subset(TOP_30_GO_BP,  cluster_name == "AdvFibro")
+df <- subset(res@result, ID %in% sub$ID)
+
+df <- as_tibble(df) %>% 
+  arrange(.data$p.adjust) %>% 
+  mutate(Description = stringr::str_to_title(.data$Description)) %>% 
+  mutate(Description = fct_reorder(.data$Description, dplyr::desc(.data$p.adjust)))
+
+ggplot(df, mapping = aes(x = .data$Description, y = -log10(.data$p.adjust))) + 
+  geom_bar(aes(fill = .data$Count), stat = "identity") + 
+  scale_fill_gradient("Gene Count", low = "grey", high = "brown") +
+  coord_flip() + labs(title = "AdvFibro", x ="") + theme_classic() +
+  ylab(bquote("-log10(adj.P-val)")) +
+  theme(axis.text = element_text(size = 14, color = "black"),
+        plot.title = element_text(size = 14, face = "bold"),
+        axis.title.x = element_text(size = 12, color = "black"),
+        axis.title.y  = element_text(size = 12, color = "black", face = "bold"),
+        legend.title = element_text(size = 8),
+        legend.text = element_text(size = 8, color = "black"),
+        legend.position = c(0.5, 0.09),
+        legend.key.height = unit(0.3, 'cm'),
+        legend.key.width = unit(0.3, 'cm')) 
+
+ggsave(paste0(out.dir, "AdvFibro_top_30_go_bp.pdf"), useDingbats = F, width = 9, height = 8,  dpi = 320)
+
+
+```
+
+
+
+
+## Peri
+
+```{r fig.width=8, fig.height=8}
+
+res <- readRDS("/data/data_mbouamboua/projects/10x_htap_nucseq/004_outs/GSEA/BP/Stromal/Peri_GO_BP.rds")
+sub <- subset(TOP_30_GO_BP,  cluster_name == "Peri")
+df <- subset(res@result, ID %in% sub$ID)
+
+df <- as_tibble(df) %>% 
+  arrange(.data$p.adjust) %>% 
+  mutate(Description = stringr::str_to_title(.data$Description)) %>% 
+  mutate(Description = fct_reorder(.data$Description, dplyr::desc(.data$p.adjust)))
+
+ggplot(df, mapping = aes(x = .data$Description, y = -log10(.data$p.adjust))) + 
+  geom_bar(aes(fill = .data$Count), stat = "identity") + 
+  scale_fill_gradient("Gene Count", low = "grey", high = "brown") +
+  coord_flip() + labs(title = "Peri", x ="") + theme_classic() +
+  ylab(bquote("-log10(adj.P-val)")) +
+  theme(axis.text = element_text(size = 14, color = "black"),
+        plot.title = element_text(size = 14, face = "bold"),
+        axis.title.x = element_text(size = 12, color = "black"),
+        axis.title.y  = element_text(size = 12, color = "black", face = "bold"),
+        legend.title = element_text(size = 8),
+        legend.text = element_text(size = 8, color = "black"),
+        legend.position = c(0.5, 0.09),
+        legend.key.height = unit(0.3, 'cm'),
+        legend.key.width = unit(0.3, 'cm')) 
+
+ggsave(paste0(out.dir, "Peri_top_30_go_bp.pdf"), useDingbats = F, width = 8, height = 8,  dpi = 320)
+
+
+```
+
+
+## MacroCD68
+
+```{r fig.width=8, fig.height=8}
+
+res <- readRDS("/data/data_mbouamboua/projects/10x_htap_nucseq/004_outs/GSEA/BP/Immune/AM2_GO_BP.rds")
+sub <- subset(TOP_30_GO_BP,  cluster_name == "MacroCD68")
+df <- subset(res@result, ID %in% sub$ID)
+
+df <- as_tibble(df) %>% 
+  arrange(.data$p.adjust) %>% 
+  mutate(Description = stringr::str_to_title(.data$Description)) %>% 
+  mutate(Description = fct_reorder(.data$Description, dplyr::desc(.data$p.adjust)))
+
+ggplot(df, mapping = aes(x = .data$Description, y = -log10(.data$p.adjust))) + 
+  geom_bar(aes(fill = .data$Count), stat = "identity") + 
+  scale_fill_gradient("Gene Count", low = "grey", high = "brown") +
+  coord_flip() + labs(title = "MacroCD68", x ="") + theme_classic() +
+  ylab(bquote("-log10(adj.P-val)")) +
+  theme(axis.text = element_text(size = 14, color = "black"),
+        plot.title = element_text(size = 14, face = "bold"),
+        axis.title.x = element_text(size = 12, color = "black"),
+        axis.title.y  = element_text(size = 12, color = "black", face = "bold"),
+        legend.title = element_text(size = 8),
+        legend.text = element_text(size = 8, color = "black"),
+        legend.position = c(0.3, 0.09),
+        legend.key.height = unit(0.3, 'cm'),
+        legend.key.width = unit(0.3, 'cm')) 
+
+ggsave(paste0(out.dir, "MacroCD68_top_30_go_bp.pdf"), useDingbats = F, width = 8, height = 8,  dpi = 320)
+
+
+```
+
+
+## MacroATP10A
+
+
+```{r fig.width=8, fig.height=8}
+
+res <- readRDS("/data/data_mbouamboua/projects/10x_htap_nucseq/004_outs/GSEA/BP/Immune/AM1_GO_BP.rds")
+sub <- subset(TOP_30_GO_BP,  cluster_name == "MacroATP10A")
+df <- subset(res@result, ID %in% sub$ID)
+
+df <- as_tibble(df) %>% 
+  arrange(.data$p.adjust) %>% 
+  mutate(Description = stringr::str_to_title(.data$Description)) %>% 
+  mutate(Description = fct_reorder(.data$Description, dplyr::desc(.data$p.adjust)))
+
+ggplot(df, mapping = aes(x = .data$Description, y = -log10(.data$p.adjust))) + 
+  geom_bar(aes(fill = .data$Count), stat = "identity") + 
+  scale_fill_gradient("Gene Count", low = "grey", high = "brown") +
+  coord_flip() + labs(title = "MacroATP10A", x ="") + theme_classic() +
+  ylab(bquote("-log10(adj.P-val)")) +
+  theme(axis.text = element_text(size = 14, color = "black"),
+        plot.title = element_text(size = 14, face = "bold"),
+        axis.title.x = element_text(size = 12, color = "black"),
+        axis.title.y  = element_text(size = 12, color = "black", face = "bold"),
+        legend.title = element_text(size = 8),
+        legend.text = element_text(size = 8, color = "black"),
+        legend.position = c(0.3, 0.09),
+        legend.key.height = unit(0.3, 'cm'),
+        legend.key.width = unit(0.3, 'cm')) 
+
+ggsave(paste0(out.dir, "MacroATP10A_top_30_go_bp.pdf"), useDingbats = F, width = 8, height = 8,  dpi = 320)
+
+
+```
+

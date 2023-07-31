@@ -1,0 +1,76 @@
+---
+title: "10x PAH NucSeq - Figures"
+author: '[Yvon Mbouamboua](mbouamboua@ipmc.cnrs.fr)'
+output:
+  html_document: default
+  html_notebook: default
+date: 'Compiled: `r Sys.Date()`'
+---
+
+# Setting parameters
+
+```{r setup, include=T, warning=FALSE}
+
+options(future.globals.maxSize = 80000*1024^2)
+main.dir <- "/data/data_mbouamboua/projects/10x_htap_nucseq/"
+out.dir <- paste0(main.dir, "github/003_proportions/")
+if(!dir.exists(out.dir)){dir.create(file.path(out.dir), recursive = T, showWarnings = F)}
+set.seed(4743)
+
+```
+
+# Require R packages and functions
+
+
+```{r warning=F, message=F}
+
+source("/data/data_mbouamboua/apps/Rpkgs/Rpkgs.R")
+source("/data/data_mbouamboua/tools/utilities.R")
+source("/data/data_mbouamboua/tools/visualization.R")
+source("/data/data_mbouamboua/tools/differential_expression.R")
+#source(paste0(out.dir, "functions.R"))
+set.seed(1337L)
+
+```
+
+
+# Loading data
+
+```{r fig.width=10, fig.height=7}
+
+htap <- readRDS(paste0(main.dir, "002_data_objects/htap.rds"))
+invisible(gc())
+
+```
+
+
+
+
+```{r}
+# Idents(htap) <- "compartment"
+# table <- Cluster_Stats(sobj = htap, group.by.var = "group")
+# xlsx::write.xlsx(x = table, file =  paste(dir, "06_tsv_outputs/proportions/compartment.xlsx", sep = "/"), col.names = TRUE, row.names = FALSE, append = FALSE)
+# 
+
+Idents(htap) <- "population"
+table <- Cluster_Stats(sobj = htap, group.by.var = "group")
+table
+xlsx::write.xlsx(x = table, file =  paste0(out.dir, "population.xlsx"), col.names = TRUE, row.names = FALSE, append = FALSE)
+```
+
+
+```{r}
+Idents(htap) <- "celltype"
+table <- Cluster_Stats(sobj = htap, group.by.var = "group")
+table
+xlsx::write.xlsx(x = table, file =  paste0(out.dir, "group.xlsx"), col.names = TRUE, row.names = FALSE, append = FALSE)
+```
+
+
+```{r}
+Idents(htap) <- "celltype"
+table <- Cluster_Stats(sobj = htap, group.by.var = "sample")
+table
+xlsx::write.xlsx(x = table, file =  paste0(out.dir, "sample.xlsx"), col.names = TRUE, row.names = FALSE, append = FALSE)
+
+```

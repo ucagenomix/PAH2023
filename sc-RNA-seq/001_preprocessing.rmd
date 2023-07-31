@@ -1,0 +1,128 @@
+---
+title: "10x PAH NucSeq - Data Processing"
+author: '[Yvon Mbouamboua](mbouamboua@ipmc.cnrs.fr)'
+output:
+  html_document: default
+  html_notebook: default
+date: 'Compiled: `r Sys.Date()`'
+---
+
+# Setting parameters
+
+```{r setup, include=T, warning=FALSE}
+
+options(future.globals.maxSize = 80000*1024^2)
+main.dir <- "/data/data_mbouamboua/projects/10x_htap_nucseq/"
+input.dir <- paste(main.dir, "data", "cellranger", sep = "/")
+input.file <- "filtered_feature_bc_matrix"
+out.dir <- paste0(main.dir, "github/")
+if(!dir.exists(out.dir)){dir.create(file.path(out.dir), recursive = T, showWarnings = F)}
+set.seed(4743)
+
+```
+
+# Require R packages and functions
+
+```{r}
+
+suppressPackageStartupMessages({
+  library(Seurat)
+  library(SeuratDisk)
+  library(Azimuth)
+  library(patchwork)
+  library(ggplot2)
+  library(dplyr)
+  library(SingleCellExperiment)
+})
+
+```
+
+
+# Create seurat objects
+
+```{r fig.width=7, fig.height=3}
+
+custom_seurat_object<- function(input.dir,  out.dir, file.name,  project = NULL){
+
+  sobj.dir <- paste(out.dir, "sobj/", sep = "/")
+  if(!dir.exists(sobj.dir)){dir.create(file.path(sobj.dir), recursive = T, showWarnings = F)}
+
+  plot.dir <- paste(out.dir, "QC_plots/", sep = "/")
+  if(!dir.exists(plot.dir)){dir.create(file.path(plot.dir), recursive = T, showWarnings = F)}
+
+  if(length(file.name) == 0){stop("No files")}
+
+  for (i in 1:length(file.name)) {
+    counts <- Read10X(paste(input.dir, file.name[[i]], input.file, sep = "/"))
+    obj <- Seurat::CreateSeuratObject(counts = counts, project = file.name[[i]])
+    obj <- Seurat::RenameCells(object = obj, add.cell.id = file.name[[i]])
+    obj[["percent.mito"]] <- PercentageFeatureSet(obj, pattern = "^MT-")
+    obj[['dropouts']] <- Matrix::colSums(obj@assays$RNA@data == 0)/nrow(obj@assays$RNA)
+    plot <- Seurat::VlnPlot(obj, features = c("nFeature_RNA", "nCount_RNA", "dropouts", "percent.mito"), ncol = 4) + NoLegend()
+    ggsave(path = paste(plot.dir), plot = plot, filename = paste(unique(obj$orig.ident),"_QC.png", sep = ""), width = 7, height = 3)
+    saveRDS(object = obj, paste(sobj.dir, file.name[[i]], ".rds", sep = ""))
+  }
+}
+
+file.name <- list()
+file.name <- list("PRC_2", "PRC_3", "PRC_5", "PRC_7", "PRC_8", "PRC_16", "PRC_18",
+                   "PAH_698029", "PAH_704945", "PAH_693770", "PAH_675093", "PAH_691048", "PAH_672704", "PAH_688194")
+
+custom_seurat_object(input.dir = input.dir, file.name = file.name, project = "NucSeq", out.dir = out.dir)
+rm(file.name)
+
+```
+
+
+
+# Quality control
+
+```{r fig.width=10, fig.height=4}
+
+obj.list <- list()
+files = list.files(path = paste(out.dir, "sobj/samples/", sep = "/"), pattern = '.rds', full.names = T, recursive = F)
+obj.list = lapply(files, function (x) readRDS(x))
+
+# Filter cells
+for (i in 1:length(obj.list)) {
+  # Define thresholds
+  max.feature.cutoff <- median(obj.list[[i]]$nFeature_RNA) + 5*mad(obj.list[[i]]$nFeature_RNA)
+  max.umi.cutoff <- median(obj.list[[i]]$nCount_RNA) + 5*mad(obj.list[[i]]$nCount_RNA)
+
+  obj.list[[i]] <- subset(obj.list[[i]], 
+                          nFeature_RNA > 200 & 
+                          nFeature_RNA < max.feature.cutoff & 
+                          nCount_RNA > 200 &
+                          nCount_RNA < max.umi.cutoff &
+                          percent.mito < 5)
+}
+
+```
+
+
+# Doublets detection
+
+```{r fig.width=10, fig.height=4}
+
+# for (i in 1:length(obj.list)) {
+#         sce <- Seurat::as.SingleCellExperiment(obj.list[[i]])
+#         sce <- scDblFinder::scDblFinder(sce)
+#         obj.list[[i]]$scDblFinder.class <- sce$scDblFinder.class
+#       }
+# 
+# merged <- Reduce(merge, obj.list)
+# saveRDS(object = merged, paste(out.dir, "merged_with_doublets.rds", sep = "/"))
+# 
+# obj.list[[i]] <- subset(obj.list[[i]], scDblFinder.class == "singlet")
+# saveRDS(object = obj.list, paste(out.dir, "obj.list.rds", sep = "/"))
+
+```
+
+
+# Session info
+
+```{r session_info}
+
+utils::capture.output(devtools::session_info())
+
+```
