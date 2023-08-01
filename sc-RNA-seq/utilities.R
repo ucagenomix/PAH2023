@@ -50,3 +50,46 @@ Cluster_Stats <- function(sobj, group.by.var = "orig.ident") {
   
   return(cluster_stats)
 }
+
+# From https://github.com/tgen/banovichlab/blob/master/ILD_eQTL/utilities.R
+Get_PCs <- function(obj, reduction.name="pca") {
+  # Determine percent of variation associated with each PC
+  pct <- obj[[reduction.name]]@stdev / sum(obj[[reduction.name]]@stdev)*100
+  # Calculate cumulative percents for each PC
+  cumu <- cumsum(pct)
+  # Determine which PC exhibits cumulative percent greater than 90% and % 
+  # variation associated with the PC as less than 5
+  co1 <- which(cumu > 90 & pct < 5)[1]
+  co1
+  # Determine the difference between variation of PC and subsequent PC and
+  # selecting last point where change of % of variation is more than 0.1%.
+  co2 <- sort(which((pct[1:length(pct) - 1] - pct[2:length(pct)]) > 0.1), decreasing = T)[1] + 1
+  # Minimum of the two calculation
+  #pcs <- min(co1, co2)
+  c(co1, co2)
+}
+
+
+New_Seurat <- function(obj, nfeatures = 3000, resolution = 0.2) {
+  
+  # Check seurat object
+  if ("Seurat" != class(obj)[1]) {
+    stop("object should be of class Seurat")
+  }
+  
+  DefaultAssay(obj) <- "RNA"
+  obj <- NormalizeData(obj, assay = "RNA")
+  obj <- FindVariableFeatures(obj, selection.method = "vst", nfeatures = nfeatures)
+  DefaultAssay(obj) <- "integrated"
+  features <- VariableFeatures(obj, assay = "integrated", nfeatures = nfeatures)
+  obj <- ScaleData(obj, assay = "integrated")
+  obj <- RunPCA(obj, assay = "integrated", features = features)
+  best.pcs <- Get_PCs(obj, reduction.name = "pca")
+  best.pcs <- min(best.pcs)
+  obj <- RunUMAP(obj, dims = 1:best.pcs, reduction = "pca", assay = "integrated")
+  obj <- FindNeighbors(obj, dims = 1:best.pcs, reduction = "pca", assay = "integrated")
+  obj <- FindClusters( object = obj, resolution = resolution, graph.name = "integrated_snn")
+  DefaultAssay(obj) <- "RNA"
+  return(obj)
+  
+}
