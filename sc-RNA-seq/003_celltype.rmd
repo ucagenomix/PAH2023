@@ -51,38 +51,26 @@ integrated <- readRDS(paste0(out.dir, "002_data_objects/integrated.rds"))
 
 # Azimuth prediction
 
-```{r }
+```{r azimuth_pred}
 
 invisible(gc())
 DefaultAssay(integrated) <- "RNA"
 integrated <- FindVariableFeatures(integrated,  nfeatures = 36601)
 integrated <- RunAzimuth(integrated, reference = "lungref")
 invisible(gc())
-
 DefaultAssay(integrated) <- "RNA"
-integrated@reductions$ref.umap <- NULL
-integrated[["refAssay"]] <- NULL
-integrated[["prediction.score.ann_level_1"]] <- NULL
-integrated[["prediction.score.ann_level_2"]] <- NULL
-integrated[["prediction.score.ann_level_3"]] <- NULL
-integrated[["prediction.score.ann_level_4"]] <- NULL
-integrated[["prediction.score.ann_level_5"]] <- NULL
-integrated[["prediction.score.ann_finest_level"]] <- NULL
-
 saveRDS(object = integrated, paste(out.dir, "integrated.rds", sep = "/"))
 invisible(gc())
-
 Dim_Plot(obj = integrated, group.by = "predicted.ann_level_1", label = T, label.ncol = 1)
 
 ```
 
 # Celltypist prediction
 
-```{r warning=FALSE}
+```{r celltypist_pred}
 
 SaveH5Seurat(htap, paste0(out.dir,"htap.H5Seurat"), overwrite = TRUE)
 Convert( paste0(out.dir,"htap.H5Seurat"), dest = "h5ad", overwrite = TRUE)
-
 
 #filt <- AddMetaData(filt, filt@reductions$umap@cell.embeddings, col.name = c("UMAP_1","UMAP_2"))
 SaveH5Seurat(filt, paste(out.dir,"htap_integrated.H5Seurat", sep ="/"), overwrite = TRUE)
@@ -99,39 +87,9 @@ metadata <- filt@meta.data
 dim(metadata)
 metadata <- cbind(metadata, h5ad_obs)
 filt@meta.data <- metadata
-dim(filt)
 filt@meta.data[, c("seurat_clusters", "celltypist_majority_voting", "celltypist_conf_score")]
 
 ```
-
-
-
-
-# Highlight each seurat cluster
-
-```{r}
-
-Idents(integrated) <- "seurat_clusters"
-seurat_clusters <- as.vector(unique(integrated$seurat_clusters))
-
-for (i in 1:length(seurat_clusters)) {
-  celltype <- seurat_clusters[i]
-  DimPlot(object = integrated,
-          group.by = "seurat_clusters",
-          pt.size = 0.001,
-          cells.highlight = WhichCells(integrated, idents = celltype),
-          cols.highlight = "#1991B4", sizes.highlight = 0.001) +
-    theme(plot.title = element_text(hjust = 0.5, size = 8, face="bold.italic"),
-                    text =  element_text(size = 6, family = "Helvetica"),
-          axis.text = element_text(size = 6, family = "Helvetica")) +
-    ggtitle(paste("Seurat cluster ", celltype, sep = "")) +
-    NoLegend()
-  ggsave(paste(out.dir, "/highlight_singlet/", "seurat_cluster_", celltype, ".png", sep = ""), width = 3, height = 3)
-
-}
-
-```
-
 
 # Check cell clusters quality
 
@@ -142,47 +100,6 @@ VlnPlot(integrated, features = c("nCount_RNA","nFeature_RNA", "percent.mito"),
   theme(axis.text.x = element_text(angle = 90, hjust = 0.5, vjust = 0.5, colour = "black")) + NoLegend()
 
 ```
-
-
-
-```{r}
-# 
-# get_pcs <- function(seurat_object, reduction="pca") {
-#   pct <- seurat_object[[reduction]]@stdev / sum(seurat_object[[reduction]]@stdev) * 100
-#   cumu <- cumsum(pct)
-#   co1 <- which(cumu > 90 & pct < 5)[1]
-#   co2 <- sort(which((pct[1:length(pct) - 1] - pct[2:length(pct)]) > 0.1), decreasing = T)[1] + 1
-#   c(co1, co2)
-# }
-# 
-# 
-# Idents(integrated) <- "seurat_clusters"
-# sub <- subset(integrated, idents = 70, invert = F)
-# #sub <- subset(integrated, cells = rownames(integrated@meta.data[integrated@meta.data$seurat_clusters == 70,]))
-# DimPlot(sub)
-# 
-# # Finding variable features, rescaling and running PCA
-# DefaultAssay(sub) <- "integrated"
-# sub <- FindVariableFeatures(sub, assay = "integrated")
-# features <- VariableFeatures(sub,  assay = "integrated")
-# sub <- ScaleData(sub, assay = "integrated", verbose = T)
-# sub <- RunPCA(sub, assay = "integrated",features = features,verbose = T)
-# 
-# best_pcs <- get_pcs(sub)
-# best_pcs <- min(best_pcs)
-# 
-# sub <- RunUMAP(sub, dims = 1:best_pcs,reduction = "pca", assay = "integrated",verbose = T)
-# sub <- FindNeighbors(sub, dims = 1:best_pcs, reduction = "pca", assay = "integrated")
-# 
-# sub <- FindClusters( object = sub, resolution = "pca", graph.name = "integrated_snn")
-# 
-
-
-```
-
-
-
-
 
 # Megakaryocyte annotation
 
@@ -201,7 +118,6 @@ Dim_Plot(obj = integrated, group.by = "predicted.ann_finest_level", label = T, l
 Dim_Plot(obj = integrated, group.by = "predicted.ann_level_1", label = T, label.ncol = 1)
 
 ```
-
 
 # Remove low quality cells
 
@@ -318,6 +234,7 @@ ggsave(path = paste(out.dir), filename = "endo_featureplot.png", width = 10, hei
 Dim_Plot(obj = endo, group.by = "seurat_clusters", title = "seurat_clusters", label = T, label.ncol = 2)
 ggsave(path = paste(out.dir), filename = "endo_seurat_clusters.png", width = 10, height = 8)
 
+# Find doublets
 doublets <- ifelse(endo@meta.data$seurat_clusters %in% c(23,30,31,32,33), "Doublets", "Singlets")
 endo@meta.data$doublets <- doublets
 Dim_Plot(obj = endo, group.by = "doublets", title = "Multiplets", label.ncol = 1, label = F)
@@ -436,8 +353,6 @@ saveRDS(imm.cells.use, paste(out.dir, "imm.cells.use.rds", sep = "/"))
 
 ```
 
-
-
 # Stromal subset
 
 ```{r fig.width=10, fig.height=8}
@@ -527,21 +442,11 @@ Dim_Plot(obj = htap, group.by = "predicted.ann_level_1", title = "predicted.ann_
 htap <- New_Seurat(obj = htap, nfeatures = 3000, resolution = 4)
 invisible(gc())
 
-#saveRDS(object = htap, paste(out.dir, "htap.rds", sep = "/"))
 invisible(gc())
 Dim_Plot(obj = htap, group.by = "predicted.ann_level_1", title = "predicted.ann_level_1", label = T, label.ncol = 1)
 Dim_Plot(obj = htap, group.by = "predicted.ann_finest_level", title = "predicted.ann_finest_level", label = T, label.ncol = 2)
 
 ```
-
-
-```{r}
-dim(htap[["RNA"]]@counts)
-dim(htap[["RNA"]]@data)
-dim(htap[["integrated"]]@counts)
-dim(htap[["integrated"]]@data)
-```
-
 
 # Add meta data
 
@@ -620,6 +525,8 @@ htap@meta.data[htap@meta.data$orig.ident %in% c("PAH_691048"),"smoker"] <-"NonSm
 htap@meta.data[htap@meta.data$orig.ident %in% c("PAH_672704"),"smoker"] <-"NonSmoker"
 htap@meta.data[htap@meta.data$orig.ident %in% c("PAH_688194"),"smoker"] <-"Smoker"
 
+saveRDS(object = htap, paste(out.dir, "htap.rds", sep = "/"))
+
 ```
 
 
@@ -665,12 +572,7 @@ p1/p2/p3
 
 ```
 
-
-
-
-
 # Manual annotation
-
 
 ```{r fig.width=8, fig.height=6}
 
@@ -679,11 +581,6 @@ DefaultAssay(htap) <- "RNA"
 FeaturePlot(htap, c("SFTPC","AGER"), max.cutoff = "q90", slot = "counts")
 
 ```
-
-
-
-
-
 
 ## AT2 sub-population
 
@@ -711,12 +608,6 @@ DotPlot(object = sub,
             features = c("SFTPB","WIF1", "NNMT", "SFTPD","SFTPC","SFTPA2","SFTPA1","SERPINA1","PGC","NPC2","NAPSA","LAMP3","HHIP","CA2","ETV5","YAP1","TNIK","TEAD1","TCF7L2","TCF12","STAT3","PTPRM","FOXP2","FOXP1","ERBB4")) + coord_flip() + scale_colour_gradientn(colours = rev(RColorBrewer::brewer.pal(n = 11, name = "RdBu")))
 
 #ggsave(paste(output_dir, "AT2_subpopulation.pdf", sep = "/"), width = 5, height = 5, useDingbats = FALSE)
-
-```
-```{r fig.width=10, fig.height=10}
-
-htap@meta.data$seurat_clusters <- htap@meta.data$integrated_snn_res.0.8
-Dim_Plot(obj = htap, group.by = "seurat_clusters", label = T, label.ncol = 2) + NoLegend()
 
 ```
 
@@ -777,13 +668,9 @@ ggsave(paste(out.dir, "alveolar_macrophage_m1_m2.png", sep = "/"), width = 10, h
 
 ```
 
-
-
-
 ```{r fig.width=10, fig.height=10}
 DimPlot(htap, group.by = "integrated_snn_res.2.5", label = T, repel = T) + NoLegend()
 ```
-
 
 ```{r fig.width=14, fig.height=7, warning=FALSE}
 
@@ -805,7 +692,6 @@ htap <- FindSubCluster(htap, cluster = 45, subcluster.name = "subclusters", grap
 DimPlot(htap, group.by = "subclusters", label = T) + NoLegend()
 
 ```
-
 
 # Vascular SMC and Airway SMC
 
@@ -837,8 +723,6 @@ vsm.cells <- WhichCells(object = sub, idents = 0)
 asm.cells <- WhichCells(object = sub, idents = 1)
 
 ```
-
-
 
 # Label
 
@@ -896,20 +780,8 @@ htap@meta.data[htap@meta.data$integrated_snn_res.4 %in% c(31),"celltype"] <-"Mac
 htap@meta.data[htap@meta.data$azimuth_finest_level %in% c("Alveolar Mφ proliferating"),"celltype"] <-"Macro-prolif"
 
 DimPlot(htap, group.by = "celltype", label = T, repel = T)
-dim(htap)
-#saveRDS(object = htap, paste0(out.dir, "htap.rds"))
 
 ```
-
-
-
-```{r fig.width=10}
-DefaultAssay(htap)<-"RNA"
-VlnPlot(htap, group.by = "celltype", features = "CD68")+NoLegend()
-```
-
-
-
 
 ```{r fig.width=14, fig.height=10}
 
@@ -1112,16 +984,12 @@ saveRDS(col.pal, paste0(main.dir, "github/002_data_objects/col.pal.rds"))
 
 col.pal <- readRDS(paste0(main.dir, "github/002_data_objects/col.pal.rds"))
 
-
 DimPlot(obj = htap, group.by = "celltype_order", label = T, repel = T, cols = col.pal$celltype)
 DimPlot(obj = htap, group.by = "population", label = T, repel = T, cols = col.pal$population)
 DimPlot(obj = htap, group.by = "group", label = T, repel = T, cols = col.pal$group)
 DimPlot(obj = htap, group.by = "sample", label = F, cols = col.pal$sample)
 
 ```
-
-
-
 
 ```{r fig.width=10, fig.height=7,message=F, warning=F}
 
