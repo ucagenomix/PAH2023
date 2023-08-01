@@ -10,7 +10,6 @@ date: 'Compiled: `r Sys.Date()`'
 # Setting parameters
 
 ```{r setup, include=T, warning=FALSE}
-
 options(future.globals.maxSize = 80000*1024^2)
 main.dir <- "/data/data_mbouamboua/projects/10x_htap_nucseq/"
 input.dir <- paste(main.dir, "data", "cellranger", sep = "/")
@@ -18,39 +17,35 @@ input.file <- "filtered_feature_bc_matrix"
 out.dir <- paste0(main.dir, "processing/")
 if(!dir.exists(out.dir)){dir.create(file.path(out.dir), recursive = T, showWarnings = F)}
 set.seed(4743)
-
 ```
 
-# Require R packages and functions
+# Require R packages
 
 ```{r}
-
 suppressPackageStartupMessages({
   library(Seurat)
 })
-
 ```
-
 
 # Integration using RPCA
 
 ```{r fig.width=10, fig.height=7}
-
+# Load sample data objects
 obj.list <- readRDS(paste(out.dir, "obj.list.rds", sep = "/"))
-
 obj.list <- lapply(X = obj.list, FUN = function(x) {
   x <- NormalizeData(x, verbose = T)
   x <- FindVariableFeatures(x, verbose = T)
 })
 invisible(gc())
 
+# Select integration features
 features <- SelectIntegrationFeatures(object.list = obj.list)
 
+# Scale data and run PCA
 obj.list <- lapply(X = obj.list, FUN = function(x) {
   x <- ScaleData(x, features = features, verbose = T)
   x <- RunPCA(x, features = features, verbose = T)
 })
-
 
 # Identify anchors and integrate datasets using RPCA
 anchors <- FindIntegrationAnchors(object.list = obj.list, 
@@ -61,6 +56,7 @@ anchors <- FindIntegrationAnchors(object.list = obj.list,
 rm(obj.list)
 invisible(gc())
 
+# Integrate data
 integrated <- IntegrateData(anchorset = anchors, dims = 1:30, verbose = F)
 rm(anchors)
 invisible(gc())
@@ -85,14 +81,9 @@ invisible(gc())
 #Plot umap
 DimPlot(integrated, group.by = c("orig.ident"), label = F)  + DarkTheme()
 DimPlot(integrated, group.by = c("seurat_clusters"), label = T, label.color = "white") + NoLegend() + DarkTheme()
-
 ```
 
-
 # Session info
-
 ```{r session_info}
-
 utils::capture.output(devtools::session_info())
-
 ```
