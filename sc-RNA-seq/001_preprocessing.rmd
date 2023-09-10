@@ -44,9 +44,12 @@ custom_seurat_object<- function(input.dir,  out.dir, file.name,  project = NULL)
     counts <- Read10X(paste(input.dir, file.name[[i]], input.file, sep = "/"))
     obj <- Seurat::CreateSeuratObject(counts = counts, project = file.name[[i]])
     obj <- Seurat::RenameCells(object = obj, add.cell.id = file.name[[i]])
-    obj[["percent.mito"]] <- PercentageFeatureSet(obj, pattern = "^MT-")
+    
+    mito.genes <- grep(pattern = "^MT-", x = rownames(obj@assays$RNA), value = TRUE)
+    obj[["percent.mito"]] <- Matrix::colSums(obj@assays$RNA[mito.genes, ])/Matrix::colSums(obj@assays$RNA)  
     obj[['dropouts']] <- Matrix::colSums(obj@assays$RNA@data == 0)/nrow(obj@assays$RNA)
-    plot <- Seurat::VlnPlot(obj, features = c("nFeature_RNA", "nCount_RNA", "dropouts", "percent.mito"), ncol = 4) + NoLegend()
+
+    plot <- VlnPlot(obj, features = c("nFeature_RNA", "nCount_RNA", "dropouts", "percent.mito"), ncol = 4) + NoLegend()
     ggsave(path = paste(plot.dir), plot = plot, filename = paste(unique(obj$orig.ident),"_QC.png", sep = ""), width = 7, height = 3)
     saveRDS(object = obj, paste(sobj.dir, file.name[[i]], ".rds", sep = ""))
   }
